@@ -159,7 +159,7 @@ const planGroupLabels: Record<PlanGroupKey, string> = {
   plus: "Plus 组",
   free: "Free 组",
   pro: "Pro 组",
-  default: "默认组",
+  default: "Image 组",
 };
 
 function formatPlanFilters(planFilters: AutoReplenishRuleRecord["planFilters"]) {
@@ -192,7 +192,7 @@ function formatGroupRouting(rule: AutoReplenishRuleRecord) {
       })
       .join("；");
   }
-  return rule.targetGroups.length ? rule.targetGroups.join(" / ") : "模板默认";
+  return rule.targetGroups.length ? rule.targetGroups.join(" / ") : "未设置";
 }
 
 type WorkspaceView = "overview" | "connections" | "proxies" | "add-account" | "inventory" | "activity";
@@ -393,12 +393,6 @@ type InventoryPlanFilter = "all" | "plus" | "free" | "pro" | "unknown";
 type InventoryAvailabilityFilter = "all" | "active" | "unavailable";
 type InventoryPushFilter = "all" | "pushed" | "unpushed";
 type InventorySortMode = "unpushed_first" | "pushed_first" | "updated_desc";
-type AccountTemplatePreview = {
-  accountId?: string;
-  groups?: string[];
-  proxy?: unknown;
-  notes?: string | null;
-};
 
 type Props = {
   data: DashboardData;
@@ -523,36 +517,6 @@ function AutoReplenishPanel({
     pro: formatGroupText(autoRule.planGroupMap.pro),
     default: formatGroupText(autoRule.planGroupMap.default),
   }));
-  const [templatePreview, setTemplatePreview] = useState<AccountTemplatePreview | null>(null);
-  const [templateError, setTemplateError] = useState("");
-
-  async function syncTemplate(form: HTMLFormElement) {
-    const formData = new FormData(form);
-    const accountId = String(formData.get("cloneAccountId") || "").trim();
-    if (!accountId) {
-      setTemplateError("先填写模板账号 ID");
-      return;
-    }
-
-    setTemplateError("");
-    const response = await fetch(
-      `/api/integrations/${integration.id}/account-template?accountId=${encodeURIComponent(accountId)}`,
-      { cache: "no-store" },
-    );
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; template?: AccountTemplatePreview }
-      | null;
-    if (!response.ok || payload?.ok === false || !payload?.template) {
-      setTemplatePreview(null);
-      setTemplateError(payload?.error ?? "同步模板失败");
-      return;
-    }
-
-    setTemplatePreview(payload.template);
-    if (payload.template.groups?.length) {
-      setGroupText(payload.template.groups.join("\n"));
-    }
-  }
 
   function updatePlanGroupText(key: PlanGroupKey, value: string) {
     setPlanGroupText((current) => ({ ...current, [key]: value }));
@@ -763,7 +727,7 @@ function AutoReplenishPanel({
           </RuleField>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.85fr)]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,0.75fr)]">
           <RuleField label="目标分组策略" help="固定分组用于统一推送；套餐分组填写后优先按账号套餐进组。">
             <div className="grid gap-2">
               <div>
@@ -790,45 +754,15 @@ function AutoReplenishPanel({
                       value={planGroupText[key]}
                       onChange={(event) => updatePlanGroupText(key, event.target.value)}
                       rows={2}
-                      placeholder={key === "default" ? "image / 未知默认组" : `${planGroupLabels[key]}名`}
+                      placeholder={key === "default" ? "image" : `${planGroupLabels[key]}名`}
                       className={inputClass}
                     />
                   </div>
                 ))}
               </div>
               <p className="text-[11px] leading-5 text-slate-500">
-                Plus / Free / Pro 命中对应组；image、未知套餐或未配置套餐走默认组；仍为空再走固定分组或模板账号分组。
+                Image 组建议填 image；Plus / Free / Pro 会同时加入对应套餐组和 Image 组，未知套餐只进 Image 组。
               </p>
-            </div>
-          </RuleField>
-          <RuleField label="克隆模板账号 ID" help="填中转站账号 ID，点击同步后读取组、代理等配置。">
-            <input
-              name="cloneAccountId"
-              defaultValue={autoRule.cloneAccountId ?? ""}
-              placeholder="中转站账号 ID / name / email"
-              className={inputClass}
-            />
-            <button
-              type="button"
-              disabled={isPending}
-              onClick={(event) => {
-                if (event.currentTarget.form) void syncTemplate(event.currentTarget.form);
-              }}
-              className={clsx(secondaryButton, "mt-2 w-full")}
-            >
-              同步模板
-            </button>
-            <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.025] px-3 py-2 text-[11px] leading-5 text-slate-500">
-              {templatePreview ? (
-                <>
-                  <p>模板: {templatePreview.accountId ?? "已读取"}</p>
-                  <p>分组: {templatePreview.groups?.length ? templatePreview.groups.join(" / ") : "未返回"}</p>
-                  <p>代理: {templatePreview.proxy ? "已返回" : "未返回"}</p>
-                </>
-              ) : (
-                "同步模板后会显示读取到的分组和代理信息。"
-              )}
-              {templateError ? <p className="text-rose-200">{templateError}</p> : null}
             </div>
           </RuleField>
           <RuleField label="推送备注" help="推送新账号时追加到备注，便于区分来源。">
@@ -1419,7 +1353,7 @@ export default function DashboardClient({ data }: Props) {
         pro: parseGroupText(formData.get("planGroup_pro")),
         default: parseGroupText(formData.get("planGroup_default")),
       },
-      cloneAccountId: String(formData.get("cloneAccountId") || ""),
+      cloneAccountId: "",
       pushNotes: String(formData.get("pushNotes") || ""),
       intervalMinutes: Number(formData.get("intervalMinutes") || 5),
       minUsableAccounts: Number(formData.get("minUsableAccounts") || 0),
@@ -2189,7 +2123,6 @@ export default function DashboardClient({ data }: Props) {
                                 accountIds: selectedIds,
                                 targetGroups: autoRule?.targetGroups ?? [],
                                 planGroupMap: autoRule?.planGroupMap ?? {},
-                                cloneAccountId: autoRule?.cloneAccountId ?? "",
                                 pushNotes: autoRule?.pushNotes ?? "",
                               }),
                             }),
@@ -3160,7 +3093,6 @@ export default function DashboardClient({ data }: Props) {
                                       accountIds: selectedIds,
                                       targetGroups: plan.autoRule?.targetGroups ?? [],
                                       planGroupMap: plan.autoRule?.planGroupMap ?? {},
-                                      cloneAccountId: plan.autoRule?.cloneAccountId ?? "",
                                       pushNotes: plan.autoRule?.pushNotes ?? "",
                                     }),
                                   }),

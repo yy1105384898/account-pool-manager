@@ -27,7 +27,6 @@ export async function POST(request: Request) {
     const result = await pushAccountsToIntegration(integration, accounts, {
       targetGroups: payload.targetGroups ?? [],
       planGroupMap: payload.planGroupMap ?? {},
-      cloneAccountId: payload.cloneAccountId || null,
       pushNotes: payload.pushNotes || null,
     });
     markAccountsPushed(accounts.map((item) => item.id));

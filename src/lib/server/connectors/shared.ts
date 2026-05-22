@@ -53,6 +53,10 @@ export function cleanGroupList(groups?: string[] | null) {
   return groups?.map((item) => item.trim()).filter(Boolean) ?? [];
 }
 
+function uniqueGroupList(groups: string[]) {
+  return [...new Set(groups)];
+}
+
 function normalizePlanKey(value?: string | null) {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return "default" as const;
@@ -78,9 +82,12 @@ export function resolveAccountPushGroups(
   if (hasPlanGroups(planGroupMap)) {
     const planKey = normalizePlanKey(account.planType);
     const routedGroups = cleanGroupList(planGroupMap?.[planKey]);
-    if (routedGroups.length > 0) return routedGroups;
-
     const defaultGroups = cleanGroupList(planGroupMap?.default);
+
+    if (routedGroups.length > 0) {
+      return uniqueGroupList([...routedGroups, ...defaultGroups]);
+    }
+
     if (defaultGroups.length > 0) return defaultGroups;
   }
 

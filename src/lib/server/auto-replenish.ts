@@ -395,7 +395,6 @@ export async function runAutoReplenishForIntegration(
     const pushOptions = {
       targetGroups: rule.targetGroups,
       planGroupMap: rule.planGroupMap,
-      cloneAccountId: rule.cloneAccountId,
       pushNotes: rule.pushNotes,
     };
     const pushResult = await pushAccountsToIntegration(integration, selected, pushOptions);
