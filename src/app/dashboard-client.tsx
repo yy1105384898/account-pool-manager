@@ -1968,10 +1968,10 @@ export default function DashboardClient({ data }: Props) {
                   </div>
                 </div>
 
-                <form action={submitProxy} className="grid gap-3 rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/36 p-4 lg:grid-cols-[180px_1fr_auto_auto]">
+                <form action={submitProxy} className="grid gap-3 rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/36 p-4 lg:grid-cols-[180px_1fr_96px_auto]">
                   <input name="name" placeholder="名称，例如 新加坡 1" className={inputClass} />
                   <input name="url" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891" className={inputClass} />
-                  <label className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/12 bg-white/[0.035] px-4 py-3 text-sm text-slate-300">
+                  <label className="inline-flex min-w-24 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-cyan-200/12 bg-white/[0.035] px-4 py-3 text-sm text-slate-300">
                     <input name="enabled" type="checkbox" defaultChecked className="accent-cyan-300" />
                     启用
                   </label>
@@ -1986,7 +1986,7 @@ export default function DashboardClient({ data }: Props) {
                       <thead className="bg-cyan-950/80 font-mono text-[11px] uppercase tracking-[0.22em] text-cyan-100">
                         <tr>
                           <th className="px-4 py-3">代理</th>
-                          <th className="px-4 py-3">状态</th>
+                          <th className="w-24 px-4 py-3">状态</th>
                           <th className="px-4 py-3">地区</th>
                           <th className="px-4 py-3">出口 IP</th>
                           <th className="px-4 py-3">延迟</th>
@@ -2009,9 +2009,9 @@ export default function DashboardClient({ data }: Props) {
                               <p className="font-medium text-white">{proxy.name}</p>
                               <p className="mt-1 break-all font-mono text-xs text-slate-500">{maskSensitiveText(proxy.url)}</p>
                             </td>
-                            <td className="px-4 py-4">
+                            <td className="w-24 px-4 py-4">
                               <span className={clsx(
-                                "rounded-full border px-2.5 py-1 text-xs",
+                                "inline-flex min-w-[58px] justify-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs",
                                 proxy.enabled
                                   ? "border-emerald-300/25 bg-emerald-400/12 text-emerald-100"
                                   : "border-white/10 bg-white/5 text-slate-400",
