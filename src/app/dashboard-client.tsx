@@ -1775,30 +1775,32 @@ export default function DashboardClient({ data }: Props) {
                       <input name="proxyUrl" placeholder="例如 http://127.0.0.1:7890" className={inputClass} />
                     </ImportField>
 
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <button type="button" onClick={() => fileInputRef.current?.click()} className={secondaryButton}>
-                        选择 TXT / JSON 文件
-                      </button>
-                      <button type="button" onClick={() => folderInputRef.current?.click()} className={secondaryButton}>
-                        选择文件夹
-                      </button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".txt,.json,application/json,text/plain"
-                        multiple
-                        className={hiddenInputClass}
-                        onChange={(event) => void readFiles(event.target.files)}
-                      />
-                      <input
-                        ref={folderInputRef}
-                        type="file"
-                        multiple
-                        className={hiddenInputClass}
-                        {...({ webkitdirectory: "" } as Record<string, string>)}
-                        onChange={(event) => void readFiles(event.target.files)}
-                      />
-                    </div>
+                    {accountImportMode === "refresh" || accountImportMode === "access" || accountImportMode === "json" ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button type="button" onClick={() => fileInputRef.current?.click()} className={secondaryButton}>
+                          选择 {accountImportMode === "json" ? "JSON" : "TXT"} 文件
+                        </button>
+                        <button type="button" onClick={() => folderInputRef.current?.click()} className={secondaryButton}>
+                          选择文件夹
+                        </button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".txt,.json,application/json,text/plain"
+                          multiple
+                          className={hiddenInputClass}
+                          onChange={(event) => void readFiles(event.target.files)}
+                        />
+                        <input
+                          ref={folderInputRef}
+                          type="file"
+                          multiple
+                          className={hiddenInputClass}
+                          {...({ webkitdirectory: "" } as Record<string, string>)}
+                          onChange={(event) => void readFiles(event.target.files)}
+                        />
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex justify-end gap-2 border-t border-cyan-200/12 px-5 py-4">
