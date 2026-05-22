@@ -11,7 +11,6 @@ import {
   CloudUpload,
   Cpu,
   Database,
-  Gauge,
   type LucideIcon,
   Network,
   PlugZap,
@@ -55,30 +54,41 @@ const primaryButton =
 const dangerButton =
   `${buttonBase} border border-rose-300/25 bg-rose-400/12 text-rose-100 hover:bg-rose-400/18`;
 
-const platformCards = [
-  {
-    value: "sub2api" as IntegrationType,
-    title: "sub2api",
-    subtitle: "账户数据 / codex-session 导入",
-  },
-  {
-    value: "cpa" as IntegrationType,
-    title: "CPA",
-    subtitle: "兼容 codexproxy 接口",
-  },
-  {
-    value: "codexproxy" as IntegrationType,
-    title: "codexproxy",
-    subtitle: "codex2api 项目",
-  },
-];
-
 const importModeLabels: Record<"refresh" | "access" | "apiKey" | "oauth" | "json", string> = {
   refresh: "Refresh Token",
   access: "Access Token",
   apiKey: "API Key",
   oauth: "OAuth 授权",
   json: "JSON 导入",
+};
+
+const integrationFormConfig: Record<
+  IntegrationType,
+  {
+    defaultName: string;
+    baseUrlPlaceholder: string;
+    authPlaceholder: string;
+    helperText: string;
+  }
+> = {
+  sub2api: {
+    defaultName: "sub2api",
+    baseUrlPlaceholder: "服务器地址，例如 http://127.0.0.1:8000",
+    authPlaceholder: "Bearer Token / Admin Token",
+    helperText: "sub2api 默认按 Authorization Bearer 鉴权，读取 /api/v1/admin/*。",
+  },
+  cpa: {
+    defaultName: "CPA",
+    baseUrlPlaceholder: "服务器地址，例如 http://127.0.0.1:8080",
+    authPlaceholder: "Management Key / API Key",
+    helperText: "CPA 保留兼容模式，继续走现有 /auth/* 接口。",
+  },
+  codexproxy: {
+    defaultName: "codexproxy",
+    baseUrlPlaceholder: "管理地址，例如 https://yycodexapi.yangyangnj.top",
+    authPlaceholder: "X-Admin-Key 管理密钥",
+    helperText: "codexproxy 自动使用请求头 X-Admin-Key，并连接 /api/admin/*。",
+  },
 };
 
 function formatTime(value: string | null) {
@@ -191,6 +201,7 @@ export default function DashboardClient({ data }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
+  const selectedIntegrationConfig = integrationFormConfig[selectedPlatform];
 
   const accounts = data.accounts.filter((item) => {
     const matchStatus = statusFilter === "all" || item.status === statusFilter;
@@ -243,13 +254,19 @@ export default function DashboardClient({ data }: Props) {
   }
 
   function submitIntegration(formData: FormData) {
+    const type = String(formData.get("type") || selectedPlatform) as IntegrationType;
+    const authPreset =
+      type === "codexproxy"
+        ? { authMode: "header" as const, authHeaderName: "X-Admin-Key" }
+        : { authMode: "bearer" as const, authHeaderName: "" };
+
     const payload = {
       name: String(formData.get("name") || ""),
-      type: String(formData.get("type") || selectedPlatform) as IntegrationType,
+      type,
       baseUrl: String(formData.get("baseUrl") || ""),
-      authMode: "bearer" as const,
+      authMode: authPreset.authMode,
       authValue: String(formData.get("authValue") || ""),
-      authHeaderName: "",
+      authHeaderName: authPreset.authHeaderName,
       notes: String(formData.get("notes") || ""),
       testAfterCreate: true,
     };
@@ -378,7 +395,7 @@ export default function DashboardClient({ data }: Props) {
                     号池管理系统
                   </h1>
                   <p className="max-w-3xl text-base leading-8 text-slate-200 sm:text-lg">
-                    以本地号池为核心，统一接入 <code className="font-mono text-cyan-100">sub2api</code>、<code className="font-mono text-cyan-100">CPA</code> 与 <code className="font-mono text-cyan-100">codexproxy</code>（codex2api 源码项目），完成账号导入、状态巡检、筛选选择与远端推送。界面已升级为深色科技感控制台，更适合云服务器与 Docker 部署场景。
+                    以本地号池为核心，统一接入 <code className="font-mono text-cyan-100">sub2api</code>、<code className="font-mono text-cyan-100">CPA</code> 与 <code className="font-mono text-cyan-100">codexproxy</code> 中转站，只在号池内维护账号，再向中转站推送，并实时读取中转站账号状态与额度窗口。
                   </p>
                 </div>
               </div>
@@ -441,12 +458,12 @@ export default function DashboardClient({ data }: Props) {
             <section className={panelClass}>
               <div className="mb-5 flex items-start justify-between gap-4">
                 <div>
-                  <p className={sectionTitleClass}>Auto Refill</p>
+                  <p className={sectionTitleClass}>Relay Target</p>
                   <h2 className="mt-2 text-2xl font-semibold tracking-[-0.055em] text-white">
-                    自动补池连接设置
+                    中转站连接设置
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-slate-400">
-                    只维护一套当前生效连接，保存后提取推送和自动补池都会使用。
+                    只维护当前生效中转站。号池向中转站推送账号，并读取中转站状态，不反向导回本地。
                   </p>
                 </div>
                 <button
@@ -475,21 +492,25 @@ export default function DashboardClient({ data }: Props) {
                     <option value="codexproxy">codexproxy（codex2api 项目）</option>
                   </select>
                   <input
+                    key={`integration-name-${selectedPlatform}`}
                     name="name"
                     placeholder="连接名称，可不填"
-                    defaultValue={selectedPlatform === "sub2api" ? "sub2api" : selectedPlatform === "cpa" ? "CPA" : "codexproxy"}
+                    defaultValue={selectedIntegrationConfig.defaultName}
                     className={inputClass}
                   />
                   <input
                     name="baseUrl"
-                    placeholder="服务器地址，例如 http://127.0.0.1:8080"
+                    placeholder={selectedIntegrationConfig.baseUrlPlaceholder}
                     className={inputClass}
                   />
                   <input
                     name="authValue"
-                    placeholder="管理员 Key / API Key / 密码"
+                    placeholder={selectedIntegrationConfig.authPlaceholder}
                     className={inputClass}
                   />
+                  <p className="px-1 text-xs leading-6 text-slate-500">
+                    {selectedIntegrationConfig.helperText}
+                  </p>
                   <textarea name="notes" placeholder="备注，可不填" rows={2} className={inputClass} />
                   <button disabled={isPending} className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-medium text-zinc-950 transition hover:bg-cyan-100 disabled:opacity-60">
                     保存连接
@@ -500,7 +521,7 @@ export default function DashboardClient({ data }: Props) {
               <div className="space-y-3">
                 {data.integrations.length === 0 ? (
                   <div className="rounded-[1.4rem] border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-6 text-sm text-slate-400">
-                    先添加一个远端连接。支持 sub2api、CPA、codexproxy（codex2api 源码项目），系统会在这里显示连通状态、鉴权方式和同步时间。
+                    先添加一个中转站连接。支持 sub2api、CPA、codexproxy（codex2api 管理端），系统会在这里显示连通状态、鉴权方式和账号状态概览。
                   </div>
                 ) : null}
 
@@ -546,7 +567,7 @@ export default function DashboardClient({ data }: Props) {
                     <div className="mt-3 grid gap-2 text-xs text-slate-500">
                       <p>鉴权: {integration.authMode}</p>
                       <p>凭据: {integration.authPreview ?? "未配置"}</p>
-                      <p>最近同步: {formatTime(integration.lastSyncedAt)}</p>
+                      <p>连通结果: {integration.lastTestMessage ?? "未记录"}</p>
                     </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3">
                       <button
@@ -568,19 +589,6 @@ export default function DashboardClient({ data }: Props) {
                         className={secondaryButton}
                       >
                         刷新状态
-                      </button>
-                      <button
-                        disabled={isPending}
-                        onClick={() =>
-                          runTask(() =>
-                            callApi(`/api/integrations/${integration.id}/sync`, {
-                              method: "POST",
-                            }),
-                          )
-                        }
-                        className={primaryButton}
-                      >
-                        导入
                       </button>
                       <button
                         disabled={isPending}
@@ -643,7 +651,7 @@ export default function DashboardClient({ data }: Props) {
                           </div>
                         </div>
                         <div className="mt-3 grid gap-3 text-xs text-slate-500 sm:grid-cols-2">
-                          <p>平台分布：{Object.entries(remoteStatus.platformDistribution).map(([key, value]) => `${key} ${value}`).join(" / ")}</p>
+                          <p>平台/套餐：{Object.entries(remoteStatus.platformDistribution).map(([key, value]) => `${key} ${value}`).join(" / ")}</p>
                           <p>类型分布：{Object.entries(remoteStatus.typeDistribution).map(([key, value]) => `${key} ${value}`).join(" / ")}</p>
                         </div>
                       </div>
@@ -1073,17 +1081,18 @@ export default function DashboardClient({ data }: Props) {
               codexproxy
             </p>
             <p>codex2api 项目的平台类型就是 codexproxy。</p>
-            <p>导入 <code className="font-mono text-cyan-100">/auth/accounts/export?format=full</code>，推送 <code className="font-mono text-cyan-100">/auth/accounts/import</code>。</p>
+            <p>状态用 <code className="font-mono text-cyan-100">/api/admin/health</code> 和 <code className="font-mono text-cyan-100">/api/admin/accounts</code>。</p>
+            <p>推送 RT/AT 分别走 <code className="font-mono text-cyan-100">/api/admin/accounts</code>、<code className="font-mono text-cyan-100">/api/admin/accounts/at</code>。</p>
           </div>
           <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
             <p className="mb-2 font-mono text-xs uppercase tracking-[0.24em] text-cyan-200/62">
               CPA
             </p>
-            <p>按 codexproxy 兼容接口读取和推送账号。</p>
+            <p>按兼容接口读取状态并推送账号。</p>
             <p>适合 CPA 管理地址与 Management Key。</p>
           </div>
           <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
-            <p>导入用 <code className="font-mono text-cyan-100">/api/v1/admin/accounts/data</code>。</p>
+            <p>状态读取用 <code className="font-mono text-cyan-100">/api/v1/admin/accounts/data</code>。</p>
             <p>推送用 <code className="font-mono text-cyan-100">/api/v1/admin/accounts/import/codex-session</code>。</p>
           </div>
           <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
