@@ -638,6 +638,7 @@ export default function DashboardClient({ data }: Props) {
   const [activityLimit, setActivityLimit] = useState(30);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [editingProxy, setEditingProxy] = useState<DashboardData["proxies"][number] | null>(null);
+  const [editingAccount, setEditingAccount] = useState<AccountViewModel | null>(null);
   const [remoteStatusOverrides, setRemoteStatusOverrides] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -1021,6 +1022,34 @@ export default function DashboardClient({ data }: Props) {
         body: JSON.stringify({ enabled }),
       }),
     );
+  }
+
+  function testAccount(accountId: string) {
+    runTask(() => callApi(`/api/accounts/${accountId}/test`, { method: "POST" }));
+  }
+
+  function saveAccountEdit(formData: FormData) {
+    if (!editingAccount) return;
+    runTask(async () => {
+      const result = await callApi(`/api/accounts/${editingAccount.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: String(formData.get("label") || ""),
+          planType: String(formData.get("planType") || ""),
+          status: String(formData.get("status") || editingAccount.status),
+          notes: String(formData.get("notes") || ""),
+        }),
+      });
+      if (result.ok) setEditingAccount(null);
+      return result;
+    });
+  }
+
+  function deleteAccountWithConfirm(account: AccountViewModel) {
+    const name = account.label || account.email || account.id.slice(0, 8);
+    if (!window.confirm(`确认删除账号 ${maskSensitiveText(name)}？`)) return;
+    runTask(() => callApi(`/api/accounts/${account.id}`, { method: "DELETE" }));
   }
 
   function refreshRemoteStatus(integrationId: string) {
@@ -2328,6 +2357,71 @@ export default function DashboardClient({ data }: Props) {
               </div>
             ) : null}
 
+            {editingAccount ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/72 px-4 py-6 backdrop-blur-sm">
+                <form
+                  action={saveAccountEdit}
+                  className="cyber-card w-full max-w-[620px] overflow-hidden rounded-[1.6rem] border border-cyan-200/18 bg-slate-950/95 shadow-[0_30px_120px_rgba(0,0,0,0.58)]"
+                >
+                  <div className="flex items-center justify-between border-b border-cyan-200/12 px-5 py-4">
+                    <div>
+                      <p className={sectionTitleClass}>Account Settings</p>
+                      <h3 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-white">修改账号</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingAccount(null)}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-sm text-slate-300 hover:bg-white/[0.08]"
+                    >
+                      关闭
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4 p-5">
+                    <div className="rounded-2xl border border-cyan-200/12 bg-cyan-300/8 px-4 py-3 text-xs leading-6 text-slate-400">
+                      {maskSensitiveText(editingAccount.email || editingAccount.tokenPreview)}
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <ImportField label="标签">
+                        <input name="label" defaultValue={editingAccount.label ?? ""} className={inputClass} />
+                      </ImportField>
+                      <ImportField label="计划">
+                        <input name="planType" defaultValue={editingAccount.planType ?? ""} placeholder="Free / Plus / Pro" className={inputClass} />
+                      </ImportField>
+                    </div>
+                    <ImportField label="状态">
+                      <select name="status" defaultValue={editingAccount.status} className={inputClass}>
+                        <option value="active">可用</option>
+                        <option value="inactive">未启用</option>
+                        <option value="disabled">已停用</option>
+                        <option value="expired">已过期</option>
+                        <option value="banned">已封禁</option>
+                        <option value="error">异常</option>
+                        <option value="quota_exhausted">额度耗尽</option>
+                        <option value="refreshing">刷新中</option>
+                        <option value="unknown">未知</option>
+                      </select>
+                    </ImportField>
+                    <ImportField label="备注">
+                      <textarea name="notes" defaultValue={editingAccount.notes ?? ""} rows={4} className={inputClass} />
+                    </ImportField>
+                  </div>
+
+                  <div className="flex flex-wrap justify-end gap-2 border-t border-cyan-200/12 px-5 py-4">
+                    <button type="button" onClick={() => testAccount(editingAccount.id)} disabled={isPending} className={secondaryButton}>
+                      测试账号
+                    </button>
+                    <button type="button" onClick={() => setEditingAccount(null)} className={secondaryButton}>
+                      取消
+                    </button>
+                    <button disabled={isPending} className={primaryButton}>
+                      保存
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : null}
+
             {activeView === "inventory" ? (
               <section id="inventory" className={panelClass}>
               <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
@@ -2495,7 +2589,7 @@ export default function DashboardClient({ data }: Props) {
                                 </p>
                                 {account.lastPushedAt ? (
                                   <p className="inline-flex rounded-full border border-amber-300/25 bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-100">
-                                    已推送
+                                    已使用{account.pushCount ? ` ${account.pushCount} 次` : ""}
                                   </p>
                                 ) : null}
                               </div>
@@ -2560,10 +2654,37 @@ export default function DashboardClient({ data }: Props) {
                                 <p>导入: {formatTime(account.lastImportedAt)}</p>
                                 <p>状态: {formatTime(account.lastStatusCheckedAt)}</p>
                                 <p>推送: {formatTime(account.lastPushedAt)}</p>
+                                {account.lastCheckMessage ? (
+                                  <p className="max-w-[220px] text-cyan-100">
+                                    检测: {maskSensitiveText(account.lastCheckMessage)}
+                                  </p>
+                                ) : null}
+                                {account.modelCount !== null || account.lastCheckLatencyMs !== null ? (
+                                  <p>
+                                    模型 {account.modelCount ?? "-"} · 延迟{" "}
+                                    {account.lastCheckLatencyMs === null ? "-" : `${account.lastCheckLatencyMs}ms`}
+                                  </p>
+                                ) : null}
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isPending}
+                                  onClick={() => testAccount(account.id)}
+                                  className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-400/18 disabled:opacity-60"
+                                >
+                                  测试
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isPending}
+                                  onClick={() => setEditingAccount(account)}
+                                  className="rounded-full border border-cyan-200/14 bg-white/[0.045] px-3 py-1.5 text-xs text-slate-200 transition hover:border-cyan-200/28 hover:bg-cyan-300/10 disabled:opacity-60"
+                                >
+                                  修改
+                                </button>
                                 <button
                                   type="button"
                                   disabled={isPending}
@@ -2591,13 +2712,7 @@ export default function DashboardClient({ data }: Props) {
                                 </button>
                                 <button
                                   disabled={isPending}
-                                  onClick={() =>
-                                    runTask(() =>
-                                      callApi(`/api/accounts/${account.id}`, {
-                                        method: "DELETE",
-                                      }),
-                                    )
-                                  }
+                                  onClick={() => deleteAccountWithConfirm(account)}
                                   className="rounded-full border border-rose-300/25 bg-rose-400/12 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-400/18 disabled:opacity-60"
                                 >
                                   删除

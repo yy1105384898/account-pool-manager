@@ -431,6 +431,10 @@ function toAccountView(record: AccountRecord): AccountViewModel {
     riskCount: typeof record.metadata.riskCount === "number" ? record.metadata.riskCount : null,
     cost5h: typeof record.metadata.cost5h === "number" ? record.metadata.cost5h : null,
     cost7d: typeof record.metadata.cost7d === "number" ? record.metadata.cost7d : null,
+    lastCheckMessage: typeof record.metadata.lastCheckMessage === "string" ? record.metadata.lastCheckMessage : null,
+    lastCheckLatencyMs: typeof record.metadata.lastCheckLatencyMs === "number" ? record.metadata.lastCheckLatencyMs : null,
+    modelCount: typeof record.metadata.modelCount === "number" ? record.metadata.modelCount : null,
+    pushCount: typeof record.metadata.pushCount === "number" ? record.metadata.pushCount : null,
     lastImportedAt: record.lastImportedAt,
     lastStatusCheckedAt: record.lastStatusCheckedAt,
     lastPushedAt: record.lastPushedAt,
@@ -698,6 +702,14 @@ export function getAccountsByIds(ids: string[]) {
   return rows.map(mapAccountRow);
 }
 
+export function getAccountById(id: string) {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM accounts WHERE id = ?")
+    .get(id) as Record<string, unknown> | undefined;
+  return row ? mapAccountRow(row) : null;
+}
+
 export function listPushedAccountStatesByIntegration(integrationId: string) {
   const db = getDb();
   return db
@@ -806,7 +818,7 @@ export function findManualAccountByCredential(input: {
 
 export function updateAccount(
   id: string,
-  patch: { label?: string; notes?: string; status?: AccountStatus },
+  patch: { label?: string; planType?: string; notes?: string; status?: AccountStatus },
 ) {
   const db = getDb();
   const existing = db
@@ -819,10 +831,11 @@ export function updateAccount(
 
   db.prepare(`
     UPDATE accounts
-    SET label = ?, notes = ?, status = ?, updated_at = ?
+    SET label = ?, plan_type = ?, notes = ?, status = ?, updated_at = ?
     WHERE id = ?
   `).run(
     patch.label !== undefined ? normalizeNullable(patch.label) : row.label,
+    patch.planType !== undefined ? normalizeNullable(patch.planType) : row.planType,
     patch.notes !== undefined ? normalizeNullable(patch.notes) : row.notes,
     patch.status ?? row.status,
     timestamp,
@@ -830,6 +843,34 @@ export function updateAccount(
   );
 
   return id;
+}
+
+export function updateAccountTestResult(
+  id: string,
+  patch: {
+    status: AccountStatus;
+    remoteStatus: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const existing = getAccountById(id);
+  if (!existing) return null;
+  const db = getDb();
+  const timestamp = nowIso();
+  db.prepare(`
+    UPDATE accounts
+    SET status = ?, remote_status = ?, metadata_json = ?,
+        last_status_checked_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    patch.status,
+    patch.remoteStatus,
+    stringifyJson({ ...existing.metadata, ...(patch.metadata ?? {}) }),
+    timestamp,
+    timestamp,
+    id,
+  );
+  return getAccountById(id);
 }
 
 export function deleteAccount(id: string) {
@@ -1087,12 +1128,31 @@ export function markAccountsPushed(accountIds: string[]) {
   if (accountIds.length === 0) return;
   const db = getDb();
   const timestamp = nowIso();
-  const placeholders = accountIds.map(() => "?").join(", ");
-  db.prepare(`
+  const select = db.prepare("SELECT * FROM accounts WHERE id = ?");
+  const update = db.prepare(`
     UPDATE accounts
-    SET last_pushed_at = ?, updated_at = ?
-    WHERE id IN (${placeholders})
-  `).run(timestamp, timestamp, ...accountIds);
+    SET metadata_json = ?, last_pushed_at = ?, updated_at = ?
+    WHERE id = ?
+  `);
+
+  for (const accountId of accountIds) {
+    const row = select.get(accountId) as Record<string, unknown> | undefined;
+    if (!row) continue;
+    const account = mapAccountRow(row);
+    const currentPushCount =
+      typeof account.metadata.pushCount === "number" ? account.metadata.pushCount : 0;
+    update.run(
+      stringifyJson({
+        ...account.metadata,
+        pushCount: currentPushCount + 1,
+        used: true,
+        lastUseMarkedAt: timestamp,
+      }),
+      timestamp,
+      timestamp,
+      accountId,
+    );
+  }
 }
 
 export function recordAccountsPushedToIntegration(

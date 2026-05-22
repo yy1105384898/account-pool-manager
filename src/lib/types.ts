@@ -170,6 +170,10 @@ export type AccountViewModel = {
   riskCount: number | null;
   cost5h: number | null;
   cost7d: number | null;
+  lastCheckMessage: string | null;
+  lastCheckLatencyMs: number | null;
+  modelCount: number | null;
+  pushCount: number | null;
   lastImportedAt: string | null;
   lastStatusCheckedAt: string | null;
   lastPushedAt: string | null;
@@ -252,6 +256,7 @@ export const manualAccountInputSchema = z.object({
 
 export const accountPatchSchema = z.object({
   label: z.string().trim().max(120).optional(),
+  planType: z.string().trim().max(60).optional(),
   notes: trimmedOptional,
   status: z.enum(accountStatuses).optional(),
 });
