@@ -935,18 +935,30 @@ export default function DashboardClient({ data }: Props) {
 
   async function readFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
+    const readableFiles = Array.from(files).filter((file) => /\.(txt|json)$/i.test(file.name));
     const chunks = await Promise.all(
-      Array.from(files)
-        .filter((file) => /\.(txt|json)$/i.test(file.name))
-        .map((file) => file.text()),
+      readableFiles.map(async (file) => {
+        const text = await file.text();
+        return {
+          name: file.name,
+          isJson: /\.json$/i.test(file.name),
+          text: text.trim(),
+        };
+      }),
     );
     if (chunks.length === 0) {
       setNotice({ type: "error", text: "请选择 .txt 或 .json 文件" });
       return;
     }
-    const hasJson = Array.from(files).some((file) => /\.json$/i.test(file.name));
+    const hasJson = chunks.some((file) => file.isJson);
     if (hasJson) setAccountImportMode("json");
-    setAccountImportText((current) => [current, ...chunks].filter(Boolean).join("\n"));
+    setAccountImportText((current) =>
+      [current, ...chunks.map((file) => file.text)].filter(Boolean).join("\n"),
+    );
+    setNotice({
+      type: "success",
+      text: `已读取 ${chunks.length} 个文件，其中 JSON ${chunks.filter((file) => file.isJson).length} 个`,
+    });
   }
 
   function submitManualAccount(formData: FormData) {
@@ -1350,8 +1362,21 @@ export default function DashboardClient({ data }: Props) {
                     </section>
 
                     <section className={panelClass}>
-                      <p className={sectionTitleClass}>最近告警</p>
-                      <h2 className="mt-2 text-xl font-semibold text-white">最近异常</h2>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className={sectionTitleClass}>最近告警</p>
+                          <h2 className="mt-2 text-xl font-semibold text-white">最近异常</h2>
+                        </div>
+                        {recentErrorLogs.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => clearLogs()}
+                            className="rounded-full border border-rose-300/25 bg-rose-400/12 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-400/18"
+                          >
+                            清理
+                          </button>
+                        ) : null}
+                      </div>
                       <div className="mt-4 grid gap-3">
                         {recentErrorLogs.length === 0 ? (
                           <div className="rounded-2xl border border-emerald-300/18 bg-emerald-400/10 px-4 py-4 text-sm text-emerald-100">
@@ -1364,12 +1389,12 @@ export default function DashboardClient({ data }: Props) {
                             className="rounded-2xl border border-rose-300/20 bg-rose-400/10 px-4 py-3"
                           >
                             <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-medium text-rose-50">{log.title}</p>
+                              <p className="text-sm font-medium text-rose-50">{maskSensitiveText(log.title)}</p>
                               <span className="font-mono text-xs text-rose-100/70">
                                 {formatTime(log.createdAt)}
                               </span>
                             </div>
-                            <p className="mt-2 text-xs leading-5 text-rose-100/75">{log.detail}</p>
+                            <p className="mt-2 text-xs leading-5 text-rose-100/75">{maskSensitiveText(log.detail)}</p>
                           </div>
                         ))}
                       </div>

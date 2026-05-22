@@ -28,13 +28,17 @@ function parseJsonPayloads(value: string) {
   try {
     return [JSON.parse(value) as unknown];
   } catch (error) {
-    const payloads = normalizeLines(value).flatMap((line) => {
+    const payloads: unknown[] = [];
+    let current = "";
+    for (const line of normalizeLines(value)) {
+      current = current ? `${current}\n${line}` : line;
       try {
-        return [JSON.parse(line) as unknown];
+        payloads.push(JSON.parse(current) as unknown);
+        current = "";
       } catch {
-        return [];
+        // Multi-line JSON files are joined here until a complete object is formed.
       }
-    });
+    }
     if (payloads.length > 0) return payloads;
     throw error;
   }
