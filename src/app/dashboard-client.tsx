@@ -205,10 +205,32 @@ const integrationFormConfig: Record<
   codexproxy: {
     defaultName: "codexproxy",
     baseUrlPlaceholder: "管理地址，例如 https://yycodexapi.yangyangnj.top",
-    authPlaceholder: "X-Admin-Key 管理密钥",
-    helperText: "codexproxy 自动使用请求头 X-Admin-Key，并连接 /api/admin/*。",
+    authPlaceholder: "X-Admin-Key 管理密钥（必填）",
+    helperText: "codexproxy 这类管理站必须填写 X-Admin-Key，否则无法读取账号和推送补号。",
   },
 };
+
+function maskEmail(value: string) {
+  const [name, domain] = value.split("@");
+  if (!name || !domain) return value;
+  return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function maskIdentifier(value?: string | null) {
+  if (!value) return "-";
+  if (value.includes("@")) return maskEmail(value);
+  if (value.length <= 8) return value;
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+function maskSensitiveText(value?: string | null) {
+  if (!value) return "";
+  return value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, (match) => maskEmail(match))
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,}|sk-proj-[A-Za-z0-9_-]+)\b/g, (match) => `${match.slice(0, 6)}…${match.slice(-4)}`)
+    .replace(/\b(access_token|refresh_token|api_key|token|key|code)=([^&\s]+)/gi, "$1=***")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, (match) => `${match.slice(0, 6)}…${match.slice(-4)}`);
+}
 
 function formatTime(value: string | null) {
   if (!value) return "未记录";
@@ -598,6 +620,7 @@ export default function DashboardClient({ data }: Props) {
   const [apiModelText, setApiModelText] = useState("");
   const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState("");
   const [oauthVerifier, setOauthVerifier] = useState("");
+  const [activityLimit, setActivityLimit] = useState(30);
   const [remoteStatusOverrides, setRemoteStatusOverrides] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -676,6 +699,7 @@ export default function DashboardClient({ data }: Props) {
     return minimum === null ? remaining : Math.min(minimum, remaining);
   }, null);
   const recentErrorLogs = data.logs.filter((item) => item.status === "error").slice(0, 4);
+  const visibleLogs = data.logs.slice(0, activityLimit);
   const activePoolAccounts = data.accounts.filter((item) => item.status === "active");
   const refreshTokenAccounts = activePoolAccounts.filter((item) => item.hasRefreshToken);
   const accessOnlyAccounts = activePoolAccounts.filter((item) => !item.hasRefreshToken);
@@ -738,6 +762,14 @@ export default function DashboardClient({ data }: Props) {
     window.addEventListener("hashchange", syncFromHash);
     return () => window.removeEventListener("hashchange", syncFromHash);
   }, []);
+
+  useEffect(() => {
+    if (activeView !== "activity") return;
+    const timer = window.setInterval(() => {
+      router.refresh();
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [activeView, router]);
 
   function toggleSelection(accountId: string) {
     setSelectedIds((current) =>
@@ -881,6 +913,14 @@ export default function DashboardClient({ data }: Props) {
     runTask(() =>
       callApi(`/api/integrations/${integrationId}/auto-replenish/run`, {
         method: "POST",
+      }),
+    );
+  }
+
+  function clearLogs(keepLatest = 0) {
+    runTask(() =>
+      callApi(`/api/logs?keepLatest=${keepLatest}`, {
+        method: "DELETE",
       }),
     );
   }
@@ -1376,6 +1416,8 @@ export default function DashboardClient({ data }: Props) {
                   <input
                     name="authValue"
                     placeholder={selectedIntegrationConfig.authPlaceholder}
+                    required={selectedPlatform === "codexproxy"}
+                    type="password"
                     className={inputClass}
                   />
                   <p className="px-1 text-xs leading-6 text-slate-500">
@@ -1434,12 +1476,12 @@ export default function DashboardClient({ data }: Props) {
                       </span>
                     </div>
                     <p className="mt-3 break-all font-mono text-xs leading-6 text-slate-300">
-                      {integration.baseUrl}
+                      {maskSensitiveText(integration.baseUrl)}
                     </p>
                     <div className="mt-3 grid gap-2 text-xs text-slate-500">
                       <p>鉴权: {integration.authMode}</p>
-                      <p>凭据: {integration.authPreview ?? "未配置"}</p>
-                      <p>连通结果: {integration.lastTestMessage ?? "未记录"}</p>
+                      <p>凭据: {maskSensitiveText(integration.authPreview) || "未配置"}</p>
+                      <p>连通结果: {maskSensitiveText(integration.lastTestMessage) || "未记录"}</p>
                     </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3">
                       <button
@@ -1954,11 +1996,11 @@ export default function DashboardClient({ data }: Props) {
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-1">
                                 <p className="font-medium tracking-[-0.025em] text-slate-100">
-                                  {account.label || account.email || "未命名账号"}
+                                  {maskSensitiveText(account.label || account.email || "未命名账号")}
                                 </p>
-                                <p className="text-xs text-slate-500">{account.email || "无邮箱"}</p>
+                                <p className="text-xs text-slate-500">{account.email ? maskEmail(account.email) : "无邮箱"}</p>
                                 {account.notes ? (
-                                  <p className="max-w-[260px] text-xs text-slate-500">{account.notes}</p>
+                                  <p className="max-w-[260px] text-xs text-slate-500">{maskSensitiveText(account.notes)}</p>
                                 ) : null}
                               </div>
                             </td>
@@ -1993,8 +2035,8 @@ export default function DashboardClient({ data }: Props) {
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-1 font-mono text-xs text-slate-400">
-                                <p>acc: {account.accountId || "-"}</p>
-                                <p>user: {account.userId || "-"}</p>
+                                <p>acc: {maskIdentifier(account.accountId)}</p>
+                                <p>user: {maskIdentifier(account.userId)}</p>
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
@@ -2155,17 +2197,45 @@ export default function DashboardClient({ data }: Props) {
 
             {activeView === "activity" ? (
               <section id="activity" className={panelClass}>
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                 <div>
                   <p className={sectionTitleClass}>Activity</p>
                   <h2 className="mt-2 text-2xl font-semibold tracking-[-0.055em] text-white">
                     运行日志
                   </h2>
+                  <p className="mt-2 text-sm text-slate-400">
+                    页面每 15 秒自动刷新；写入新日志时自动保留最新 200 条。
+                  </p>
                 </div>
-                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 py-2 text-xs text-slate-400">
-                  {isPending ? <RefreshCw className="h-4 w-4 animate-spin text-cyan-200" /> : null}
-                  <span>{isPending ? "处理中" : "空闲"}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={activityLimit}
+                    onChange={(event) => setActivityLimit(Number(event.target.value))}
+                    className="neon-input rounded-2xl px-3 py-2 text-xs"
+                  >
+                    <option value={20}>显示 20 条</option>
+                    <option value={50}>显示 50 条</option>
+                    <option value={100}>显示 100 条</option>
+                  </select>
+                  <button type="button" onClick={() => router.refresh()} className={secondaryButton}>
+                    刷新
+                  </button>
+                  <button type="button" onClick={() => clearLogs(20)} className={secondaryButton}>
+                    保留 20 条
+                  </button>
+                  <button type="button" onClick={() => clearLogs()} className={dangerButton}>
+                    清空日志
+                  </button>
+                  <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 py-2 text-xs text-slate-400">
+                    {isPending ? <RefreshCw className="h-4 w-4 animate-spin text-cyan-200" /> : null}
+                    <span>{isPending ? "处理中" : "自动刷新"}</span>
+                  </div>
                 </div>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <MiniStatus label="当前显示" value={`${visibleLogs.length}/${data.logs.length}`} />
+                <MiniStatus label="错误日志" value={data.logs.filter((item) => item.status === "error").length} />
+                <MiniStatus label="自动清理" value="最新 200 条" />
               </div>
               <div className="mt-5 grid gap-3">
                 {data.logs.length === 0 ? (
@@ -2173,7 +2243,7 @@ export default function DashboardClient({ data }: Props) {
                     还没有操作记录。
                   </div>
                 ) : null}
-                {data.logs.map((log) => (
+                {visibleLogs.map((log) => (
                   <article
                     key={log.id}
                     className="flex flex-col gap-3 rounded-[1.4rem] border border-cyan-200/12 bg-slate-950/34 p-4 transition hover:border-cyan-200/25 hover:bg-slate-900/42 md:flex-row md:items-start md:justify-between"
@@ -2198,8 +2268,8 @@ export default function DashboardClient({ data }: Props) {
                         )}
                       </div>
                       <div className="space-y-1">
-                        <h3 className="text-sm font-medium text-slate-100">{log.title}</h3>
-                        <p className="text-sm text-slate-400">{log.detail}</p>
+                        <h3 className="text-sm font-medium text-slate-100">{maskSensitiveText(log.title)}</h3>
+                        <p className="text-sm text-slate-400">{maskSensitiveText(log.detail)}</p>
                         <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate-600">
                           {log.kind}
                         </p>

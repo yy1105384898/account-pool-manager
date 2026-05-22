@@ -13,6 +13,10 @@ export async function POST(request: Request) {
   try {
     const rawPayload = (await request.json()) as { testAfterCreate?: boolean } & Record<string, unknown>;
     const payload = integrationInputSchema.parse(rawPayload);
+    if (payload.type === "codexproxy" && !payload.authValue) {
+      return NextResponse.json({ ok: false, error: "codexproxy 需要填写 X-Admin-Key 管理密钥" }, { status: 400 });
+    }
+
     const integration = createIntegration(payload);
     if (!integration) {
       return NextResponse.json({ ok: false, error: "创建失败" }, { status: 400 });

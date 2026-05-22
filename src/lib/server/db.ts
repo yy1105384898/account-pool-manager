@@ -439,6 +439,33 @@ export function listActivityLogs(limit = 12) {
   return rows.map(mapLogRow);
 }
 
+export function clearActivityLogs(options?: { keepLatest?: number }) {
+  const db = getDb();
+  const keepLatest = Math.max(0, Math.min(options?.keepLatest ?? 0, 1000));
+
+  if (keepLatest > 0) {
+    db.prepare(`
+      DELETE FROM activity_logs
+      WHERE id NOT IN (
+        SELECT id FROM activity_logs ORDER BY created_at DESC LIMIT ?
+      )
+    `).run(keepLatest);
+    return;
+  }
+
+  db.prepare("DELETE FROM activity_logs").run();
+}
+
+function pruneActivityLogs(maxRows = 200) {
+  const db = getDb();
+  db.prepare(`
+    DELETE FROM activity_logs
+    WHERE id NOT IN (
+      SELECT id FROM activity_logs ORDER BY created_at DESC LIMIT ?
+    )
+  `).run(maxRows);
+}
+
 export function listAutoReplenishRules() {
   const db = getDb();
   const rows = db
@@ -998,12 +1025,13 @@ export function addActivityLog(
     stringifyJson(metadata),
     nowIso(),
   );
+  pruneActivityLogs();
 }
 
 export function getDashboardData(): DashboardData {
   const integrations = listIntegrations();
   const accounts = listAccounts();
-  const logs = listActivityLogs();
+  const logs = listActivityLogs(100);
   const storedRules = new Map(
     listAutoReplenishRules().map((item) => [item.integrationId, item] as const),
   );
