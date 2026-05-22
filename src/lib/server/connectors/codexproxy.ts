@@ -264,9 +264,11 @@ export async function readCodexProxyStatus(integration: IntegrationRecord): Prom
   ).length;
   const totalAccounts = accounts.length || (typeof health.total === "number" ? health.total : 0);
   const normalAccounts =
-    typeof health.available === "number"
-      ? Math.min(health.available, totalAccounts || health.available)
-      : fallbackNormal;
+    accounts.length > 0
+      ? fallbackNormal
+      : typeof health.available === "number"
+        ? Math.min(health.available, totalAccounts || health.available)
+        : 0;
   const quota5h = accounts.map((item) => percent(item.usage_percent_5h));
   const quota7d = accounts.map((item) => percent(item.usage_percent_7d));
 
@@ -313,6 +315,7 @@ export async function pushToCodexProxy(
           group: pushGroups[0],
           groups: pushGroups.length ? pushGroups : undefined,
           group_name: pushGroups[0],
+          group_names: pushGroups.length ? pushGroups : undefined,
           notes: options?.pushNotes?.trim() || undefined,
         },
       });
@@ -334,6 +337,7 @@ export async function pushToCodexProxy(
         group: pushGroups[0],
         groups: pushGroups.length ? pushGroups : undefined,
         group_name: pushGroups[0],
+        group_names: pushGroups.length ? pushGroups : undefined,
         notes: options?.pushNotes?.trim() || undefined,
       },
     });
@@ -437,6 +441,8 @@ export async function pushToCpa(
         planType: item.planType ?? undefined,
         group: targetGroups[0],
         groups: targetGroups.length ? targetGroups : undefined,
+        group_name: targetGroups[0],
+        group_names: targetGroups.length ? targetGroups : undefined,
         notes: options?.pushNotes?.trim() || undefined,
       };
     }),

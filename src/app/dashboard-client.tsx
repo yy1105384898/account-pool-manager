@@ -579,7 +579,7 @@ function AutoReplenishPanel({
           >
             {translateAutoRunStatus(autoRule.lastStatus)}
           </span>
-          <span>触发: {autoRule.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}</span>
+          <span>触发: {autoRule.triggerMode === "all" ? "缺号必补，额度低不单独补" : "缺号或额度低就补"}</span>
           <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
           <span>套餐: {formatPlanFilters(autoRule.planFilters)}</span>
           <span>分组: {formatGroupRouting(autoRule)}</span>
@@ -608,13 +608,13 @@ function AutoReplenishPanel({
               className="h-4 w-4 accent-cyan-300"
             />
           </RuleField>
-          <RuleField label="触发条件" help="判断远端中转站是否需要补号。">
+          <RuleField label="触发条件" help="正常账号低于最低值一定补；这里只控制额度低但账号数够时是否补。">
             <select name="triggerMode" defaultValue={autoRule.triggerMode} className={inputClass}>
-              <option value="any">缺号或额度低就补</option>
-              <option value="all">缺号且额度低才补</option>
+              <option value="any">缺号必补，额度低也补</option>
+              <option value="all">缺号必补，仅额度耗尽才补</option>
             </select>
             <p className="mt-2 text-[11px] leading-5 text-slate-500">
-              缺号：正常账号数低于阈值；额度低：5h 剩余额度低于阈值。
+              缺号：正常账号数低于阈值，会忽略额度直接补到目标正常数。
             </p>
           </RuleField>
           <RuleField label="可用账号范围" help="选择哪类账号推送。">
@@ -955,15 +955,11 @@ export default function DashboardClient({ data }: Props) {
         ? remaining5h < autoRule.min5hRemainingPercent
         : false;
     const quotaCritical = isQuotaCritical(remaining5h);
-    const shouldTrigger = Boolean(
-      autoRule &&
-        remoteStatus &&
-        (quotaCritical ||
-          (autoRule.triggerMode === "all" ? normalLow && quotaLow : normalLow || quotaLow)),
-    );
+    const quotaLowTriggers = Boolean(autoRule && autoRule.triggerMode === "any" && quotaLow);
+    const shouldTrigger = Boolean(autoRule && remoteStatus && (normalLow || quotaCritical || quotaLowTriggers));
     const desiredByNormal =
       normalLow && remoteStatus && autoRule
-        ? Math.max(autoRule.targetUsableAccounts - remoteStatus.normalAccounts, 0)
+        ? Math.max(Math.max(autoRule.targetUsableAccounts, autoRule.minUsableAccounts) - remoteStatus.normalAccounts, 0)
         : 0;
     const desiredByQuota =
       quotaLow && autoRule && (!autoRule.respectRateLimitRecovery || normalLow || quotaCritical)
@@ -3072,7 +3068,7 @@ export default function DashboardClient({ data }: Props) {
                                 {formatPercent(plan.remaining5h)}
                               </p>
                               <p className="mt-1 text-xs leading-6 text-slate-500">
-                                规则 {plan.autoRule?.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}
+                                规则 {plan.autoRule?.triggerMode === "all" ? "缺号必补" : "缺号/额度低"}
                                 {" · "}
                                 {plan.autoRule ? credentialFilterLabels[plan.autoRule.credentialFilter] : "全部账号"}
                                 {" · "}

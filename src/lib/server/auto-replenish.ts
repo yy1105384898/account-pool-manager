@@ -289,8 +289,8 @@ export async function runAutoReplenishForIntegration(
       typeof quotaRemaining === "number" &&
       quotaRemaining < rule.min5hRemainingPercent;
     const quotaCritical = isQuotaCritical(quotaRemaining);
-    const shouldTrigger =
-      quotaCritical || (rule.triggerMode === "all" ? normalLow && quotaLow : normalLow || quotaLow);
+    const quotaLowTriggers = rule.triggerMode === "any" && quotaLow;
+    const shouldTrigger = normalLow || quotaCritical || quotaLowTriggers;
 
     if (!shouldTrigger) {
       const result: AutoReplenishRunResult = {
@@ -340,7 +340,7 @@ export async function runAutoReplenishForIntegration(
     }
 
     const desiredByNormal = normalLow
-      ? Math.max(rule.targetUsableAccounts - summary.normalAccounts, 0)
+      ? Math.max(Math.max(rule.targetUsableAccounts, rule.minUsableAccounts) - summary.normalAccounts, 0)
       : 0;
     const desiredByQuota =
       quotaLow && (!rule.respectRateLimitRecovery || normalLow || quotaCritical)
