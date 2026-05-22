@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { fetchViaProxy } from "@/lib/server/proxy-fetch";
 
 export async function POST(request: Request) {
   const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -11,7 +12,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "API Key 不能为空" }, { status: 400 });
   }
 
-  const response = await fetch(`${baseUrl}/v1/models`, {
+  const response = await fetchViaProxy(`${baseUrl}/v1/models`, {
     headers: { Authorization: `Bearer ${apiKey}` },
     cache: "no-store",
   });

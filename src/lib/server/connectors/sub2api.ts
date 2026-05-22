@@ -19,7 +19,7 @@ type AdminDataPayload = {
     credentials?: Record<string, unknown>;
     quota?: Record<string, unknown>;
     usage?: Record<string, unknown>;
-  }>;
+  } & Record<string, unknown>>;
 };
 
 type AccountListItem = {
@@ -52,6 +52,12 @@ function readString(record: Record<string, unknown>, ...keys: string[]) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
+}
+
+function compact(record: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined && value !== null && value !== ""),
+  );
 }
 
 async function loadStatuses(integration: IntegrationRecord) {
@@ -104,7 +110,7 @@ export async function importFromSub2Api(integration: IntegrationRecord) {
   const query = new URLSearchParams({
     platform: "openai",
     type: "oauth",
-    include_proxies: "false",
+    include_proxies: "true",
   });
 
   const [payload, statuses] = await Promise.all([
@@ -143,6 +149,9 @@ export async function importFromSub2Api(integration: IntegrationRecord) {
         metadata: {
           platform: "sub2api",
           exportedName: item.name ?? null,
+          sub2apiConfig: item,
+          quota5hUsedPercent: percent(item.quota?.["5h"] ?? item.usage?.["5h"] ?? item.credentials?.quota5hUsedPercent),
+          quota7dUsedPercent: percent(item.quota?.["7d"] ?? item.usage?.["7d"] ?? item.credentials?.quota7dUsedPercent),
         },
       },
     ];
@@ -154,7 +163,7 @@ export async function readSub2ApiStatus(integration: IntegrationRecord): Promise
   const query = new URLSearchParams({
     platform: "openai",
     type: "oauth",
-    include_proxies: "false",
+    include_proxies: "true",
   });
   const [payload, statuses] = await Promise.all([
     fetchJson<AdminDataPayload>(
@@ -206,17 +215,43 @@ export async function pushToSub2Api(
   integration: IntegrationRecord,
   accounts: AccountRecord[],
 ) {
+  const accountPayloads = accounts.map((item) => {
+    const storedConfig =
+      item.metadata.sub2apiConfig && typeof item.metadata.sub2apiConfig === "object"
+        ? (item.metadata.sub2apiConfig as Record<string, unknown>)
+        : {};
+    const storedCredentials =
+      storedConfig.credentials && typeof storedConfig.credentials === "object"
+        ? (storedConfig.credentials as Record<string, unknown>)
+        : {};
+    const credentials = compact({
+      ...storedCredentials,
+      access_token: item.accessToken,
+      refresh_token: item.refreshToken ?? undefined,
+      email: item.email ?? storedCredentials.email,
+      chatgpt_account_id: item.accountId ?? storedCredentials.chatgpt_account_id,
+      chatgpt_user_id: item.userId ?? storedCredentials.chatgpt_user_id,
+      plan_type: item.planType ?? storedCredentials.plan_type,
+    });
+    return compact({
+      ...storedConfig,
+      name: storedConfig.name ?? item.label ?? item.email ?? item.accountId ?? undefined,
+      notes: item.notes ?? storedConfig.notes,
+      platform: storedConfig.platform ?? "openai",
+      type: storedConfig.type ?? "oauth",
+      credentials,
+      access_token: credentials.access_token,
+      refresh_token: credentials.refresh_token,
+      email: credentials.email,
+      chatgpt_account_id: credentials.chatgpt_account_id,
+      chatgpt_user_id: credentials.chatgpt_user_id,
+      plan_type: credentials.plan_type,
+    });
+  });
+
   const body = {
-    contents: accounts.map((item) =>
-      JSON.stringify({
-        access_token: item.accessToken,
-        refresh_token: item.refreshToken ?? undefined,
-        email: item.email ?? undefined,
-        chatgpt_account_id: item.accountId ?? undefined,
-        chatgpt_user_id: item.userId ?? undefined,
-        plan_type: item.planType ?? undefined,
-      }),
-    ),
+    contents: accountPayloads.map((item) => JSON.stringify(item)),
+    accounts: accountPayloads,
     update_existing: true,
   };
 

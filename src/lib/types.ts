@@ -102,6 +102,19 @@ export type ActivityLogRecord = {
   createdAt: string;
 };
 
+export type ProxyRecord = {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  lastTestStatus: "success" | "error" | null;
+  lastTestMessage: string | null;
+  lastLatencyMs: number | null;
+  lastTestedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AutoReplenishRuleRecord = {
   id: string | null;
   integrationId: string;
@@ -149,6 +162,12 @@ export type AccountViewModel = {
   notes: string | null;
   tokenPreview: string;
   hasRefreshToken: boolean;
+  quota5hUsedPercent: number | null;
+  quota7dUsedPercent: number | null;
+  requestCount7d: number | null;
+  riskCount: number | null;
+  cost5h: number | null;
+  cost7d: number | null;
   lastImportedAt: string | null;
   lastStatusCheckedAt: string | null;
   lastPushedAt: string | null;
@@ -166,6 +185,7 @@ export type DashboardSummary = {
   activeAccounts: number;
   warningAccounts: number;
   integrationCount: number;
+  proxyCount: number;
 };
 
 export type DashboardData = {
@@ -173,6 +193,7 @@ export type DashboardData = {
   accounts: AccountViewModel[];
   integrations: IntegrationViewModel[];
   logs: ActivityLogRecord[];
+  proxies: ProxyRecord[];
   autoRules: AutoReplenishRuleRecord[];
   autoRuns: AutoReplenishRunRecord[];
 };
@@ -203,6 +224,12 @@ export const integrationInputSchema = z.object({
       return value;
     }),
   notes: trimmedOptional,
+});
+
+export const proxyInputSchema = z.object({
+  name: z.string().trim().max(80).optional(),
+  url: z.url("代理地址格式不正确"),
+  enabled: z.boolean().default(true),
 });
 
 export const manualAccountInputSchema = z.object({
@@ -246,6 +273,7 @@ export const autoReplenishRuleSchema = z.object({
 });
 
 export type IntegrationInput = z.infer<typeof integrationInputSchema>;
+export type ProxyInput = z.infer<typeof proxyInputSchema>;
 export type ManualAccountInput = z.infer<typeof manualAccountInputSchema>;
 export type AccountPatchInput = z.infer<typeof accountPatchSchema>;
 export type PushRequestInput = z.infer<typeof pushRequestSchema>;

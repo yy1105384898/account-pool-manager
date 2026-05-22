@@ -132,7 +132,7 @@ const credentialFilterLabels: Record<AutoReplenishRuleRecord["credentialFilter"]
   access_only: "仅 Access Token",
 };
 
-type WorkspaceView = "overview" | "connections" | "add-account" | "inventory" | "activity";
+type WorkspaceView = "overview" | "connections" | "proxies" | "add-account" | "inventory" | "activity";
 
 const workspaceNavItems: Array<{
   view: WorkspaceView;
@@ -142,6 +142,7 @@ const workspaceNavItems: Array<{
 }> = [
   { view: "overview", label: "监控概览", icon: Sparkles, meta: "只读" },
   { view: "connections", label: "中转管理", icon: PlugZap, meta: "配置/补池" },
+  { view: "proxies", label: "代理管理", icon: Network, meta: "OpenAI" },
   { view: "add-account", label: "账号导入", icon: CloudUpload, meta: "入池" },
   { view: "inventory", label: "库存推送", icon: Database, meta: "筛选/推送" },
   { view: "activity", label: "运行日志", icon: Activity, meta: "追踪" },
@@ -160,6 +161,11 @@ const workspaceViewMeta: Record<
     eyebrow: "Relay Target",
     title: "中转站管理",
     description: "可添加多个 codexproxy / sub2api / CPA 中转站，每个中转站独立检测、补池、推送。",
+  },
+  proxies: {
+    eyebrow: "Proxy",
+    title: "代理管理",
+    description: "代理只用于直连 OpenAI 官网/API 的请求，例如库存账号检测、OAuth、API Key 模型读取；中转站接口不走代理。",
   },
   "add-account": {
     eyebrow: "Add Account",
@@ -622,6 +628,7 @@ export default function DashboardClient({ data }: Props) {
   const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState("");
   const [oauthVerifier, setOauthVerifier] = useState("");
   const [activityLimit, setActivityLimit] = useState(30);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [remoteStatusOverrides, setRemoteStatusOverrides] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -836,6 +843,26 @@ export default function DashboardClient({ data }: Props) {
     setNotice({ type: "success", text: `已导出 ${ids.length} 个账号` });
   }
 
+  async function exportOneAccount(format: AccountExportFormat, accountId: string) {
+    const query = new URLSearchParams({ format, ids: accountId });
+    const response = await fetch(`/api/accounts/export?${query.toString()}`);
+    if (!response.ok) {
+      setNotice({ type: "error", text: "导出失败" });
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `account-${accountId.slice(0, 8)}-${format}.${format === "txt" ? "txt" : "json"}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setNotice({ type: "success", text: "账号已导出" });
+  }
+
   function submitIntegration(formData: FormData) {
     const type = String(formData.get("type") || selectedPlatform) as IntegrationType;
     const authPreset =
@@ -863,6 +890,38 @@ export default function DashboardClient({ data }: Props) {
       if (result.ok) setShowIntegrationForm(false);
       return result;
     });
+  }
+
+  function submitProxy(formData: FormData) {
+    runTask(() =>
+      callApi("/api/proxies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: String(formData.get("name") || ""),
+          url: String(formData.get("url") || ""),
+          enabled: formData.get("enabled") !== "off",
+        }),
+      }),
+    );
+  }
+
+  function updateProxyState(id: string, enabled: boolean) {
+    runTask(() =>
+      callApi(`/api/proxies/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      }),
+    );
+  }
+
+  function testProxy(id: string) {
+    runTask(() => callApi(`/api/proxies/${id}/test`, { method: "POST" }));
+  }
+
+  function deleteProxy(id: string) {
+    runTask(() => callApi(`/api/proxies/${id}`, { method: "DELETE" }));
   }
 
   function refreshRemoteStatus(integrationId: string) {
@@ -930,6 +989,28 @@ export default function DashboardClient({ data }: Props) {
     startTransition(async () => {
       await fetch("/api/auth/logout", { method: "POST" });
       window.location.href = "/login";
+    });
+  }
+
+  function changeAdminPassword(formData: FormData) {
+    const newPassword = String(formData.get("newPassword") || "");
+    const confirmPassword = String(formData.get("confirmPassword") || "");
+    if (newPassword !== confirmPassword) {
+      setNotice({ type: "error", text: "两次新密码不一致" });
+      return;
+    }
+
+    runTask(async () => {
+      const result = await callApi("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: String(formData.get("currentPassword") || ""),
+          newPassword,
+        }),
+      });
+      if (result.ok) setShowPasswordForm(false);
+      return result;
     });
   }
 
@@ -1151,12 +1232,22 @@ export default function DashboardClient({ data }: Props) {
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-blue-100">
               <PlugZap className="h-3.5 w-3.5" /> {data.summary.integrationCount} 个中转站
             </span>
+            <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-cyan-100">
+              <Network className="h-3.5 w-3.5" /> {data.summary.proxyCount} 个代理
+            </span>
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-amber-100">
               <Activity className="h-3.5 w-3.5" /> 风险 {warningRate}%
             </span>
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-emerald-100">
               <ShieldCheck className="h-3.5 w-3.5" /> 待补 {relayNeedPushCount} 个中转
             </span>
+            <button
+              type="button"
+              onClick={() => setShowPasswordForm(true)}
+              className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-cyan-100 transition hover:border-cyan-300/30 hover:bg-cyan-400/10"
+            >
+              <KeyRound className="h-3.5 w-3.5" /> 修改密码
+            </button>
             <button
               type="button"
               onClick={logout}
@@ -1649,6 +1740,102 @@ export default function DashboardClient({ data }: Props) {
               </section>
             ) : null}
 
+            {activeView === "proxies" ? (
+              <section id="proxies" className={panelClass}>
+                <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                  <div>
+                    <p className={sectionTitleClass}>Proxy Pool</p>
+                    <h2 className="mt-2 text-2xl font-semibold tracking-[-0.055em] text-white">
+                      代理管理
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      仅用于直连 OpenAI 的库存检测、OAuth、API Key 请求；codexproxy/sub2api/CPA 中转检测和推送不使用这里的代理。
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <MiniStatus label="总代理" value={data.proxies.length} />
+                    <MiniStatus label="启用" value={data.proxies.filter((item) => item.enabled).length} />
+                    <MiniStatus label="可用" value={data.proxies.filter((item) => item.lastTestStatus === "success").length} />
+                  </div>
+                </div>
+
+                <form action={submitProxy} className="grid gap-3 rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/36 p-4 lg:grid-cols-[180px_1fr_auto_auto]">
+                  <input name="name" placeholder="名称，例如 新加坡 1" className={inputClass} />
+                  <input name="url" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891" className={inputClass} />
+                  <label className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/12 bg-white/[0.035] px-4 py-3 text-sm text-slate-300">
+                    <input name="enabled" type="checkbox" defaultChecked className="accent-cyan-300" />
+                    启用
+                  </label>
+                  <button disabled={isPending} className={primaryButton}>
+                    添加代理
+                  </button>
+                </form>
+
+                <div className="mt-5 overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/34">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="bg-cyan-950/80 font-mono text-[11px] uppercase tracking-[0.22em] text-cyan-100">
+                        <tr>
+                          <th className="px-4 py-3">代理</th>
+                          <th className="px-4 py-3">状态</th>
+                          <th className="px-4 py-3">延迟</th>
+                          <th className="px-4 py-3">测试结果</th>
+                          <th className="px-4 py-3">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.proxies.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                              还没有代理。库存账号检测 OpenAI 时会直连，建议先添加代理。
+                            </td>
+                          </tr>
+                        ) : null}
+                        {data.proxies.map((proxy) => (
+                          <tr key={proxy.id} className="border-t border-cyan-200/[0.075]">
+                            <td className="px-4 py-4">
+                              <p className="font-medium text-white">{proxy.name}</p>
+                              <p className="mt-1 break-all font-mono text-xs text-slate-500">{maskSensitiveText(proxy.url)}</p>
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className={clsx(
+                                "rounded-full border px-2.5 py-1 text-xs",
+                                proxy.enabled
+                                  ? "border-emerald-300/25 bg-emerald-400/12 text-emerald-100"
+                                  : "border-white/10 bg-white/5 text-slate-400",
+                              )}>
+                                {proxy.enabled ? "启用" : "停用"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-slate-300">
+                              {proxy.lastLatencyMs === null ? "未测试" : `${proxy.lastLatencyMs}ms`}
+                            </td>
+                            <td className="px-4 py-4 text-xs text-slate-400">
+                              <p>{proxy.lastTestStatus === "success" ? "可用" : proxy.lastTestStatus === "error" ? "异常" : "未测试"}</p>
+                              <p className="mt-1">{maskSensitiveText(proxy.lastTestMessage)}</p>
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="flex flex-wrap gap-2">
+                                <button type="button" disabled={isPending} onClick={() => testProxy(proxy.id)} className={secondaryButton}>
+                                  测试
+                                </button>
+                                <button type="button" disabled={isPending} onClick={() => updateProxyState(proxy.id, !proxy.enabled)} className={secondaryButton}>
+                                  {proxy.enabled ? "停用" : "启用"}
+                                </button>
+                                <button type="button" disabled={isPending} onClick={() => deleteProxy(proxy.id)} className={dangerButton}>
+                                  删除
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             {activeView === "add-account" ? (
               <section id="add-account" className={panelClass}>
               <div className="mb-5 flex items-start justify-between gap-4">
@@ -1902,6 +2089,38 @@ export default function DashboardClient({ data }: Props) {
               </div>
             ) : null}
 
+            {showPasswordForm ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
+                <form
+                  action={changeAdminPassword}
+                  className="cyber-card w-full max-w-[460px] rounded-[1.6rem] border border-cyan-200/18 bg-slate-950/95 p-5 shadow-[0_30px_120px_rgba(0,0,0,0.55)]"
+                >
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className={sectionTitleClass}>Security</p>
+                      <h3 className="mt-2 text-xl font-semibold text-white">修改管理员密码</h3>
+                    </div>
+                    <button type="button" onClick={() => setShowPasswordForm(false)} className={secondaryButton}>
+                      关闭
+                    </button>
+                  </div>
+                  <div className="grid gap-3">
+                    <input name="currentPassword" type="password" placeholder="当前密码" className={inputClass} />
+                    <input name="newPassword" type="password" placeholder="新密码" className={inputClass} />
+                    <input name="confirmPassword" type="password" placeholder="确认新密码" className={inputClass} />
+                  </div>
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowPasswordForm(false)} className={secondaryButton}>
+                      取消
+                    </button>
+                    <button disabled={isPending} className={primaryButton}>
+                      保存新密码
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : null}
+
             {activeView === "inventory" ? (
               <section id="inventory" className={panelClass}>
               <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
@@ -2000,7 +2219,11 @@ export default function DashboardClient({ data }: Props) {
                         <th className="px-4 py-3">选</th>
                         <th className="px-4 py-3">标签 / 邮箱</th>
                         <th className="px-4 py-3">来源</th>
+                        <th className="px-4 py-3">计划</th>
                         <th className="px-4 py-3">状态</th>
+                        <th className="px-4 py-3">请求(7D)</th>
+                        <th className="px-4 py-3">用量</th>
+                        <th className="px-4 py-3">成本</th>
                         <th className="px-4 py-3">Token</th>
                         <th className="px-4 py-3">标识</th>
                         <th className="px-4 py-3">同步</th>
@@ -2010,7 +2233,7 @@ export default function DashboardClient({ data }: Props) {
                     <tbody>
                       {accounts.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-500">
+                          <td colSpan={12} className="px-4 py-12 text-center text-sm text-slate-500">
                             没有匹配账号。
                           </td>
                         </tr>
@@ -2052,7 +2275,17 @@ export default function DashboardClient({ data }: Props) {
                                 <p className="text-xs text-slate-500">
                                   {account.hasRefreshToken ? "支持续期" : "无续期凭据"}
                                 </p>
+                                {account.lastPushedAt ? (
+                                  <p className="inline-flex rounded-full border border-amber-300/25 bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-100">
+                                    已推送
+                                  </p>
+                                ) : null}
                               </div>
+                            </td>
+                            <td className="px-4 py-4 align-top">
+                              <span className="inline-flex rounded-lg border border-blue-300/25 bg-blue-400/12 px-2.5 py-1 text-xs font-semibold text-blue-100">
+                                {account.planType || "未知"}
+                              </span>
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-2">
@@ -2068,9 +2301,34 @@ export default function DashboardClient({ data }: Props) {
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
+                              <div className="font-mono text-xs">
+                                <span className="text-emerald-300">{account.requestCount7d ?? "-"}</span>
+                                <span className="px-1 text-slate-600">/</span>
+                                <span className="text-rose-300">{account.riskCount ?? 0}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 align-top">
+                              <div className="space-y-2 text-xs text-slate-300">
+                                <p>5h {formatPercent(account.quota5hUsedPercent)}</p>
+                                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/10">
+                                  <div className="h-full rounded-full bg-rose-400" style={{ width: `${account.quota5hUsedPercent ?? 0}%` }} />
+                                </div>
+                                <p>7d {formatPercent(account.quota7dUsedPercent)}</p>
+                                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/10">
+                                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${account.quota7dUsedPercent ?? 0}%` }} />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 align-top">
+                              <div className="space-y-1 text-xs text-slate-400">
+                                <p>5h: {account.cost5h === null ? "-" : `$${account.cost5h}`}</p>
+                                <p>7d: {account.cost7d === null ? "-" : `$${account.cost7d}`}</p>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 align-top">
                               <div className="space-y-1">
                                 <p className="font-mono text-xs text-slate-300">{account.tokenPreview}</p>
-                                <p className="text-xs text-slate-500">{account.planType || "未知 plan"}</p>
+                                <p className="text-xs text-slate-500">{account.hasRefreshToken ? "RT" : "AT/API"}</p>
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
@@ -2088,6 +2346,14 @@ export default function DashboardClient({ data }: Props) {
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isPending}
+                                  onClick={() => void exportOneAccount("pool", account.id)}
+                                  className="rounded-full border border-blue-300/20 bg-blue-400/10 px-3 py-1.5 text-xs text-blue-100 transition hover:bg-blue-400/18 disabled:opacity-60"
+                                >
+                                  导出
+                                </button>
                                 <button
                                   disabled={isPending}
                                   onClick={() =>

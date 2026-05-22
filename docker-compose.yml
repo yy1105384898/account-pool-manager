@@ -10,7 +10,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      ADMIN_PASSWORD: "Yy19971215@"
-      ADMIN_SESSION_TOKEN: "account-pool-admin-Yy19971215"
+      ADMIN_PASSWORD: "Proliant*12"
+      ADMIN_SESSION_TOKEN: "account-pool-admin-Proliant12"
     volumes:
       - ./data:/app/data

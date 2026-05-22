@@ -19,6 +19,8 @@ import type {
   IntegrationRecord,
   IntegrationViewModel,
   ManualAccountInput,
+  ProxyInput,
+  ProxyRecord,
   RemoteStatusSummary,
 } from "@/lib/types";
 
@@ -150,6 +152,25 @@ function getDb() {
       last_pushed_at TEXT NOT NULL,
       push_count INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (integration_id, account_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS proxies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_test_status TEXT,
+      last_test_message TEXT,
+      last_latency_ms INTEGER,
+      last_tested_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
   `);
 
@@ -316,6 +337,27 @@ function mapAutoReplenishRunRow(row: Record<string, unknown>): AutoReplenishRunR
   };
 }
 
+function mapProxyRow(row: Record<string, unknown>): ProxyRecord {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    url: String(row.url),
+    enabled: toBool(row.enabled),
+    lastTestStatus:
+      row.last_test_status === "success" || row.last_test_status === "error"
+        ? row.last_test_status
+        : null,
+    lastTestMessage:
+      typeof row.last_test_message === "string" ? row.last_test_message : null,
+    lastLatencyMs:
+      typeof row.last_latency_ms === "number" ? row.last_latency_ms : null,
+    lastTestedAt:
+      typeof row.last_tested_at === "string" ? row.last_tested_at : null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
 function maskSecret(value: string | null) {
   if (!value) return null;
   const trimmed = value.trim();
@@ -340,6 +382,7 @@ function buildSummary(accounts: AccountRecord[], integrations: IntegrationRecord
     activeAccounts,
     warningAccounts,
     integrationCount: integrations.length,
+    proxyCount: listProxies().filter((item) => item.enabled).length,
   };
 }
 
@@ -357,6 +400,8 @@ function toIntegrationView(record: IntegrationRecord): IntegrationViewModel {
 }
 
 function toAccountView(record: AccountRecord): AccountViewModel {
+  const quota5h = typeof record.metadata.quota5hUsedPercent === "number" ? record.metadata.quota5hUsedPercent : null;
+  const quota7d = typeof record.metadata.quota7dUsedPercent === "number" ? record.metadata.quota7dUsedPercent : null;
   return {
     id: record.id,
     sourceType: record.sourceType,
@@ -372,6 +417,12 @@ function toAccountView(record: AccountRecord): AccountViewModel {
     notes: record.notes,
     tokenPreview: maskToken(record.accessToken),
     hasRefreshToken: Boolean(record.refreshToken),
+    quota5hUsedPercent: quota5h,
+    quota7dUsedPercent: quota7d,
+    requestCount7d: typeof record.metadata.requestCount7d === "number" ? record.metadata.requestCount7d : null,
+    riskCount: typeof record.metadata.riskCount === "number" ? record.metadata.riskCount : null,
+    cost5h: typeof record.metadata.cost5h === "number" ? record.metadata.cost5h : null,
+    cost7d: typeof record.metadata.cost7d === "number" ? record.metadata.cost7d : null,
     lastImportedAt: record.lastImportedAt,
     lastStatusCheckedAt: record.lastStatusCheckedAt,
     lastPushedAt: record.lastPushedAt,
@@ -387,6 +438,33 @@ function stringifyJson(value: Record<string, unknown> | undefined) {
 function normalizeNullable(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+export function getAppSetting(key: string) {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT value FROM app_settings WHERE key = ?")
+    .get(key) as { value?: string } | undefined;
+  return typeof row?.value === "string" ? row.value : null;
+}
+
+export function setAppSetting(key: string, value: string) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `).run(key, value, nowIso());
+}
+
+export function getStoredAdminPassword() {
+  return getAppSetting("admin_password");
+}
+
+export function setStoredAdminPassword(password: string) {
+  setAppSetting("admin_password", password);
 }
 
 export function createDefaultAutoReplenishRule(
@@ -429,6 +507,80 @@ export function listAccounts() {
     .prepare("SELECT * FROM accounts ORDER BY updated_at DESC, created_at DESC")
     .all() as Record<string, unknown>[];
   return rows.map(mapAccountRow);
+}
+
+export function listProxies() {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT * FROM proxies ORDER BY enabled DESC, updated_at DESC")
+    .all() as Record<string, unknown>[];
+  return rows.map(mapProxyRow);
+}
+
+export function getProxyById(id: string) {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM proxies WHERE id = ?")
+    .get(id) as Record<string, unknown> | undefined;
+  return row ? mapProxyRow(row) : null;
+}
+
+export function getFirstEnabledProxy() {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM proxies WHERE enabled = 1 ORDER BY updated_at DESC LIMIT 1")
+    .get() as Record<string, unknown> | undefined;
+  return row ? mapProxyRow(row) : null;
+}
+
+export function createProxy(input: ProxyInput) {
+  const db = getDb();
+  const timestamp = nowIso();
+  const id = randomUUID();
+  const name = normalizeNullable(input.name) ?? input.url;
+  db.prepare(`
+    INSERT INTO proxies (
+      id, name, url, enabled, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, name, input.url.trim(), input.enabled ? 1 : 0, timestamp, timestamp);
+  return getProxyById(id);
+}
+
+export function updateProxy(
+  id: string,
+  patch: Partial<ProxyInput> & {
+    lastTestStatus?: "success" | "error";
+    lastTestMessage?: string;
+    lastLatencyMs?: number;
+  },
+) {
+  const existing = getProxyById(id);
+  if (!existing) return null;
+  const db = getDb();
+  const timestamp = nowIso();
+  const lastTestedAt = patch.lastTestStatus ? timestamp : existing.lastTestedAt;
+  db.prepare(`
+    UPDATE proxies
+    SET name = ?, url = ?, enabled = ?, last_test_status = ?, last_test_message = ?,
+        last_latency_ms = ?, last_tested_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    patch.name !== undefined ? normalizeNullable(patch.name) ?? existing.name : existing.name,
+    patch.url !== undefined ? patch.url.trim() : existing.url,
+    patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
+    patch.lastTestStatus ?? existing.lastTestStatus,
+    patch.lastTestMessage !== undefined ? normalizeNullable(patch.lastTestMessage) : existing.lastTestMessage,
+    patch.lastLatencyMs !== undefined ? patch.lastLatencyMs : existing.lastLatencyMs,
+    lastTestedAt,
+    timestamp,
+    id,
+  );
+  return getProxyById(id);
+}
+
+export function deleteProxy(id: string) {
+  const db = getDb();
+  db.prepare("DELETE FROM proxies WHERE id = ?").run(id);
 }
 
 export function listActivityLogs(limit = 12) {
@@ -1032,6 +1184,7 @@ export function getDashboardData(): DashboardData {
   const integrations = listIntegrations();
   const accounts = listAccounts();
   const logs = listActivityLogs(100);
+  const proxies = listProxies();
   const storedRules = new Map(
     listAutoReplenishRules().map((item) => [item.integrationId, item] as const),
   );
@@ -1047,6 +1200,7 @@ export function getDashboardData(): DashboardData {
     accounts: accounts.map(toAccountView),
     integrations: integrations.map(toIntegrationView),
     logs,
+    proxies,
     autoRules,
     autoRuns,
   };

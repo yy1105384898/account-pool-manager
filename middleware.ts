@@ -14,7 +14,7 @@ function isPublicPath(pathname: string) {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const sessionToken = process.env.ADMIN_SESSION_TOKEN || process.env.ADMIN_PASSWORD || "Yy19971215@";
+  const sessionToken = process.env.ADMIN_SESSION_TOKEN || process.env.ADMIN_PASSWORD || "Proliant*12";
   const authed = request.cookies.get(authCookieName)?.value === sessionToken;
 
   if (pathname === "/login" && authed) {
