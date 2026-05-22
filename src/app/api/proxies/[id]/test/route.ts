@@ -9,34 +9,45 @@ type RouteContext = {
 
 type ProxyGeoPayload = {
   success?: boolean;
+  status?: string;
   ip?: string;
+  query?: string;
   country?: string;
   region?: string;
+  regionName?: string;
   city?: string;
 };
 
 function readGeoLocation(payload: ProxyGeoPayload | null) {
-  if (!payload?.success) return { ip: null, location: null };
-  const location = [payload.country, payload.region, payload.city]
+  if (!payload?.success && payload?.status !== "success") {
+    return { ip: null, location: null };
+  }
+  const location = [payload.country, payload.regionName ?? payload.region, payload.city]
     .filter((item): item is string => Boolean(item))
-    .join(" · ");
+    .join("·");
   return {
-    ip: payload.ip ?? null,
+    ip: payload.ip ?? payload.query ?? null,
     location: location || null,
   };
 }
 
 async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
-  try {
-    const response = await fetchViaProxy("https://ipwho.is/?lang=zh-CN", {
-      cache: "no-store",
-    }, proxy);
-    if (!response.ok) return { ip: null, location: null };
-    const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
-    return readGeoLocation(payload);
-  } catch {
-    return { ip: null, location: null };
+  for (const url of [
+    "http://ip-api.com/json/?lang=zh-CN",
+    "https://ipinfo.io/json",
+    "https://ipwho.is/?lang=zh-CN",
+  ]) {
+    try {
+      const response = await fetchViaProxy(url, { cache: "no-store" }, proxy);
+      if (!response.ok) continue;
+      const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
+      const result = readGeoLocation(payload);
+      if (result.ip || result.location) return result;
+    } catch {
+      // Try the next geo provider.
+    }
   }
+  return { ip: null, location: null };
 }
 
 export async function POST(_: Request, context: RouteContext) {
