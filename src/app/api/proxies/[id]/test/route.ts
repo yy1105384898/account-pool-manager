@@ -32,22 +32,30 @@ function readGeoLocation(payload: ProxyGeoPayload | null) {
 }
 
 async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
+  let lastError = "代理出口检测失败";
   for (const url of [
     "http://ip-api.com/json/?lang=zh-CN",
     "https://ipinfo.io/json",
     "https://ipwho.is/?lang=zh-CN",
   ]) {
+    const started = Date.now();
     try {
       const response = await fetchViaProxy(url, { cache: "no-store" }, proxy);
-      if (!response.ok) continue;
+      if (!response.ok) {
+        lastError = `出口检测返回 ${response.status}`;
+        continue;
+      }
       const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
       const result = readGeoLocation(payload);
-      if (result.ip || result.location) return result;
-    } catch {
-      // Try the next geo provider.
+      if (result.ip || result.location) {
+        return { ...result, latencyMs: Date.now() - started };
+      }
+      lastError = "出口检测未返回地区";
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "代理出口检测失败";
     }
   }
-  return { ip: null, location: null };
+  throw new Error(lastError);
 }
 
 export async function POST(_: Request, context: RouteContext) {
@@ -55,41 +63,30 @@ export async function POST(_: Request, context: RouteContext) {
   const proxy = getProxyById(id);
   if (!proxy) return NextResponse.json({ ok: false, error: "代理不存在" }, { status: 404 });
 
-  const started = Date.now();
   try {
-    const response = await fetchViaProxy("https://api.openai.com/v1/models", {
-      headers: { Authorization: "Bearer invalid-proxy-test-key" },
-      cache: "no-store",
-    }, proxy);
-    const latency = Date.now() - started;
-    const ok = response.status === 401 || response.status === 403 || response.status === 200;
-    const geo = ok ? await detectProxyGeo(proxy) : { ip: null, location: null };
+    const geo = await detectProxyGeo(proxy);
     updateProxy(id, {
-      lastTestStatus: ok ? "success" : "error",
-      lastTestMessage: geo.location
-        ? `OpenAI 返回 ${response.status}，出口 ${geo.location}`
-        : `OpenAI 返回 ${response.status}`,
-      lastLatencyMs: latency,
+      lastTestStatus: "success",
+      lastTestMessage: geo.location ? `出口 ${geo.location}` : "代理可用",
+      lastLatencyMs: geo.latencyMs,
       lastTestIp: geo.ip,
       lastTestLocation: geo.location,
     });
     revalidatePath("/");
     return NextResponse.json({
-      ok,
-      latencyMs: latency,
+      ok: true,
+      latencyMs: geo.latencyMs,
       ip: geo.ip,
       location: geo.location,
-      message: ok
-        ? `代理可用，${geo.location ?? "地区未返回"}，延迟 ${latency}ms`
-        : `代理异常，OpenAI 返回 ${response.status}`,
-    }, { status: ok ? 200 : 400 });
+      message: `代理可用，${geo.location ?? "地区未返回"}，延迟 ${geo.latencyMs}ms`,
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "未知错误";
-    const message = `代理连接失败：${detail}`;
+    const message = `代理测试失败：${detail}`;
     updateProxy(id, {
       lastTestStatus: "error",
       lastTestMessage: message,
-      lastLatencyMs: Date.now() - started,
+      lastLatencyMs: null,
       lastTestIp: null,
       lastTestLocation: null,
     });

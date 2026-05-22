@@ -583,7 +583,7 @@ export function updateProxy(
   patch: Partial<ProxyInput> & {
     lastTestStatus?: "success" | "error";
     lastTestMessage?: string;
-    lastLatencyMs?: number;
+    lastLatencyMs?: number | null;
     lastTestIp?: string | null;
     lastTestLocation?: string | null;
   },
