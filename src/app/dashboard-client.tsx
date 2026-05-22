@@ -42,6 +42,42 @@ const statusTone: Record<AccountStatus, string> = {
   unknown: "text-slate-300 bg-slate-400/10 border-slate-300/15",
 };
 
+const accountStatusLabels: Record<AccountStatus, string> = {
+  active: "可用",
+  inactive: "未启用",
+  disabled: "已停用",
+  expired: "已过期",
+  banned: "已封禁",
+  error: "异常",
+  quota_exhausted: "额度耗尽",
+  refreshing: "刷新中",
+  unknown: "未知",
+};
+
+const accountSourceLabels: Record<AccountViewModel["sourceType"], string> = {
+  manual: "手动导入",
+  codexproxy: "codexproxy",
+  sub2api: "sub2api",
+  cpa: "CPA",
+};
+
+const remoteStatusLabels: Record<string, string> = {
+  active: "可用",
+  normal: "正常",
+  inactive: "未启用",
+  disabled: "已停用",
+  expired: "已过期",
+  banned: "已封禁",
+  error: "异常",
+  invalid: "失效",
+  unauthorized: "鉴权失败",
+  quota_exhausted: "额度耗尽",
+  exhausted: "额度耗尽",
+  rate_limited: "限流",
+  refreshing: "刷新中",
+  unknown: "未知",
+};
+
 const sectionTitleClass =
   "text-[11px] font-semibold uppercase tracking-[0.34em] text-cyan-200/70";
 const panelClass = "cyber-card matrix-glow rounded-[1.8rem] p-5 sm:p-6";
@@ -70,6 +106,12 @@ const autoRunStatusTone: Record<NonNullable<AutoReplenishRuleRecord["lastStatus"
   success: "border-emerald-300/25 bg-emerald-400/12 text-emerald-100",
   error: "border-rose-300/25 bg-rose-400/12 text-rose-100",
   skipped: "border-cyan-200/18 bg-cyan-300/10 text-cyan-100",
+};
+
+const autoRunStatusLabels: Record<NonNullable<AutoReplenishRuleRecord["lastStatus"]>, string> = {
+  success: "成功",
+  error: "失败",
+  skipped: "跳过",
 };
 
 const credentialFilterLabels: Record<AutoReplenishRuleRecord["credentialFilter"], string> = {
@@ -179,6 +221,16 @@ function formatPercent(value: number | null) {
   return `${Math.round(value * 10) / 10}%`;
 }
 
+function translateRemoteStatus(value?: string | null) {
+  if (!value) return "未记录";
+  return remoteStatusLabels[value.toLowerCase()] ?? value;
+}
+
+function translateAutoRunStatus(value?: AutoReplenishRuleRecord["lastStatus"] | null) {
+  if (!value) return "待机";
+  return autoRunStatusLabels[value] ?? value;
+}
+
 type Props = {
   data: DashboardData;
 };
@@ -268,7 +320,7 @@ function AutoReplenishPanel({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-cyan-200/60">
-            Auto Replenish
+            自动监视
           </p>
           <h4 className="mt-2 text-base font-medium text-white">
             自动补池
@@ -287,7 +339,7 @@ function AutoReplenishPanel({
 
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
         <MiniStatus
-          label="normal"
+          label="正常账号"
           value={
             remoteStatus
               ? `${remoteStatus.normalAccounts}/${remoteStatus.totalAccounts}`
@@ -295,15 +347,15 @@ function AutoReplenishPanel({
           }
         />
         <MiniStatus
-          label="5h remain"
+          label="5h 剩余"
           value={remoteStatus ? formatPercent(read5hRemaining(remoteStatus)) : "未检测"}
         />
         <MiniStatus
-          label="last check"
+          label="上次检测"
           value={remoteStatus ? formatTime(remoteStatus.updatedAt) : "未检测"}
         />
         <MiniStatus
-          label="next run"
+          label="下次执行"
           value={autoRule.nextRunAt ? formatTime(autoRule.nextRunAt) : "未安排"}
         />
       </div>
@@ -318,7 +370,7 @@ function AutoReplenishPanel({
                 : "border-white/10 bg-white/[0.04] text-slate-300",
             )}
           >
-            {autoRule.lastStatus ?? "idle"}
+            {translateAutoRunStatus(autoRule.lastStatus)}
           </span>
           <span>触发: {autoRule.triggerMode === "all" ? "全部满足" : "任一触发"}</span>
           <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
@@ -451,7 +503,7 @@ function AutoReplenishPanel({
                     autoRunStatusTone[run.status],
                   )}
                 >
-                  {run.status}
+                  {translateAutoRunStatus(run.status)}
                 </span>
                 <span>{run.triggerSource === "manual" ? "手动" : "定时"}</span>
                 <span>{formatTime(run.createdAt)}</span>
@@ -551,6 +603,55 @@ export default function DashboardClient({ data }: Props) {
     return minimum === null ? remaining : Math.min(minimum, remaining);
   }, null);
   const recentErrorLogs = data.logs.filter((item) => item.status === "error").slice(0, 4);
+  const activePoolAccounts = data.accounts.filter((item) => item.status === "active");
+  const refreshTokenAccounts = activePoolAccounts.filter((item) => item.hasRefreshToken);
+  const accessOnlyAccounts = activePoolAccounts.filter((item) => !item.hasRefreshToken);
+  const selectedAccounts = data.accounts.filter((item) => selectedIds.includes(item.id));
+  const selectedActiveAccounts = selectedAccounts.filter((item) => item.status === "active");
+  const importLineCount = accountImportText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+  const relayReplenishPlans = data.integrations.map((integration) => {
+    const remoteStatus = remoteStatusByIntegration[integration.id];
+    const autoRule = autoRuleByIntegration.get(integration.id);
+    const targetUsableAccounts = autoRule?.targetUsableAccounts ?? 0;
+    const shortage = remoteStatus
+      ? Math.max(0, targetUsableAccounts - remoteStatus.normalAccounts)
+      : 0;
+    const remaining5h = read5hRemaining(remoteStatus);
+    const quotaLow =
+      typeof remaining5h === "number" && autoRule
+        ? remaining5h < autoRule.min5hRemainingPercent
+        : false;
+    const warningAccounts = remoteStatus?.warningAccounts ?? 0;
+    const recommendedPushCount = Math.min(
+      activePoolAccounts.length,
+      Math.max(
+        shortage,
+        warningAccounts,
+        quotaLow ? (autoRule?.quotaLowPurchaseCount ?? 0) : 0,
+      ),
+    );
+
+    return {
+      integration,
+      autoRule,
+      remoteStatus,
+      shortage,
+      quotaLow,
+      warningAccounts,
+      remaining5h,
+      recommendedPushCount,
+    };
+  });
+  const relayNeedPushCount = relayReplenishPlans.filter(
+    (item) => item.recommendedPushCount > 0 || !item.remoteStatus,
+  ).length;
+  const recommendedPushTotal = relayReplenishPlans.reduce(
+    (total, item) => total + item.recommendedPushCount,
+    0,
+  );
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const activeViewMeta = workspaceViewMeta[activeView];
 
@@ -575,6 +676,10 @@ export default function DashboardClient({ data }: Props) {
 
   function selectAllVisible() {
     setSelectedIds(accounts.map((item) => item.id));
+  }
+
+  function selectActiveVisible() {
+    setSelectedIds(accounts.filter((item) => item.status === "active").map((item) => item.id));
   }
 
   function changeWorkspaceView(view: WorkspaceView) {
@@ -870,7 +975,7 @@ export default function DashboardClient({ data }: Props) {
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
                   <section className={panelClass}>
                     <div className="mb-4">
-                      <p className={sectionTitleClass}>Relay Monitor</p>
+                      <p className={sectionTitleClass}>中转监视</p>
                       <h2 className="mt-2 text-xl font-semibold text-white">中转监视矩阵</h2>
                       <p className="mt-2 text-sm text-slate-400">
                         这里只显示检测结果。连接配置、自动补池和手动执行放到“中转管理”页。
@@ -904,7 +1009,7 @@ export default function DashboardClient({ data }: Props) {
                             </div>
                             <div className="mt-4 grid gap-3 sm:grid-cols-4">
                               <MiniStatus
-                                label="connect"
+                                label="连接"
                                 value={
                                   integration.lastTestStatus === "success"
                                     ? "已连通"
@@ -914,15 +1019,15 @@ export default function DashboardClient({ data }: Props) {
                                 }
                               />
                               <MiniStatus
-                                label="latency"
+                                label="延迟"
                                 value={remoteStatus ? `${remoteStatus.latencyMs}ms` : "未检测"}
                               />
                               <MiniStatus
-                                label="5h remain"
+                                label="5h 剩余"
                                 value={remoteStatus ? formatPercent(read5hRemaining(remoteStatus)) : "未检测"}
                               />
                               <MiniStatus
-                                label="last check"
+                                label="上次检测"
                                 value={remoteStatus ? formatTime(remoteStatus.updatedAt) : "未检测"}
                               />
                             </div>
@@ -944,12 +1049,13 @@ export default function DashboardClient({ data }: Props) {
 
                   <div className="grid gap-5">
                     <section className={panelClass}>
-                      <p className={sectionTitleClass}>Auto Monitor</p>
+                      <p className={sectionTitleClass}>自动补池监视</p>
                       <h2 className="mt-2 text-xl font-semibold text-white">自动补池状态</h2>
                       <div className="mt-4 grid gap-3">
-                        <MiniStatus label="enabled rules" value={`${enabledAutoRuleCount}/${data.autoRules.length}`} />
-                        <MiniStatus label="checked relays" value={`${remoteSummaries.length}/${data.summary.integrationCount}`} />
-                        <MiniStatus label="remote warning" value={remoteWarningAccounts} />
+                        <MiniStatus label="启用规则" value={`${enabledAutoRuleCount}/${data.autoRules.length}`} />
+                        <MiniStatus label="已检测中转" value={`${remoteSummaries.length}/${data.summary.integrationCount}`} />
+                        <MiniStatus label="远端异常" value={remoteWarningAccounts} />
+                        <MiniStatus label="待补中转" value={relayNeedPushCount} />
                       </div>
                       <div className="mt-4 grid gap-3">
                         {data.autoRules.length === 0 ? (
@@ -978,7 +1084,7 @@ export default function DashboardClient({ data }: Props) {
                               </span>
                             </div>
                             <p className="mt-2 text-sm text-slate-300">
-                              目标 {rule.targetUsableAccounts} · 单次 {rule.maxAccountsPerRun} · {rule.lastStatus ?? "idle"}
+                              目标 {rule.targetUsableAccounts} · 单次 {rule.maxAccountsPerRun} · {translateAutoRunStatus(rule.lastStatus)}
                             </p>
                           </div>
                         ))}
@@ -986,7 +1092,7 @@ export default function DashboardClient({ data }: Props) {
                     </section>
 
                     <section className={panelClass}>
-                      <p className={sectionTitleClass}>Recent Alerts</p>
+                      <p className={sectionTitleClass}>最近告警</p>
                       <h2 className="mt-2 text-xl font-semibold text-white">最近异常</h2>
                       <div className="mt-4 grid gap-3">
                         {recentErrorLogs.length === 0 ? (
@@ -1198,7 +1304,7 @@ export default function DashboardClient({ data }: Props) {
                             </div>
                             {Object.entries(remoteStatus.statusDistribution).map(([key, value]) => (
                               <div key={key} className="mb-2 last:mb-0">
-                                <div className="mb-1 flex justify-between text-xs text-slate-300"><span>{key}</span><span>{value}</span></div>
+                                <div className="mb-1 flex justify-between text-xs text-slate-300"><span>{translateRemoteStatus(key)}</span><span>{value}</span></div>
                                 <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-cyan-300" style={{ width: `${remoteStatus.totalAccounts ? Math.round((value / remoteStatus.totalAccounts) * 100) : 0}%` }} /></div>
                               </div>
                             ))}
@@ -1377,6 +1483,46 @@ export default function DashboardClient({ data }: Props) {
                   添加账号方式：登录 GPT 账号后获取 Refresh Token / Access Token / API Key，或者把 GPT JSON 内容粘贴进来批量导入。
                 </div>
               )}
+
+              <div className="mt-5 grid gap-4 xl:grid-cols-3">
+                <div className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/36 p-4">
+                  <p className={sectionTitleClass}>导入预检</p>
+                  <div className="mt-4 grid gap-3">
+                    <MiniStatus label="待导入行" value={importLineCount} />
+                    <MiniStatus label="当前模式" value={importModeLabels[accountImportMode]} />
+                    <MiniStatus label="本地可用" value={activePoolAccounts.length} />
+                  </div>
+                </div>
+
+                <div className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/36 p-4">
+                  <p className={sectionTitleClass}>补号库存</p>
+                  <div className="mt-4 grid gap-3">
+                    <MiniStatus label="可续期账号" value={refreshTokenAccounts.length} />
+                    <MiniStatus label="仅 AT/API" value={accessOnlyAccounts.length} />
+                    <MiniStatus label="待补中转" value={relayNeedPushCount} />
+                  </div>
+                </div>
+
+                <div className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/36 p-4">
+                  <p className={sectionTitleClass}>导入后动作</p>
+                  <div className="mt-4 grid gap-3">
+                    <button
+                      type="button"
+                      onClick={() => changeWorkspaceView("inventory")}
+                      className={primaryButton}
+                    >
+                      去库存选择推送
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => changeWorkspaceView("connections")}
+                      className={secondaryButton}
+                    >
+                      查看中转缺口
+                    </button>
+                  </div>
+                </div>
+              </div>
               </section>
             ) : null}
 
@@ -1405,15 +1551,15 @@ export default function DashboardClient({ data }: Props) {
                     className={inputClass}
                   >
                     <option value="all">全部状态</option>
-                    <option value="active">active</option>
-                    <option value="inactive">inactive</option>
-                    <option value="disabled">disabled</option>
-                    <option value="expired">expired</option>
-                    <option value="banned">banned</option>
-                    <option value="error">error</option>
-                    <option value="quota_exhausted">quota_exhausted</option>
-                    <option value="refreshing">refreshing</option>
-                    <option value="unknown">unknown</option>
+                    <option value="active">可用</option>
+                    <option value="inactive">未启用</option>
+                    <option value="disabled">已停用</option>
+                    <option value="expired">已过期</option>
+                    <option value="banned">已封禁</option>
+                    <option value="error">异常</option>
+                    <option value="quota_exhausted">额度耗尽</option>
+                    <option value="refreshing">刷新中</option>
+                    <option value="unknown">未知</option>
                   </select>
                   <select
                     value={sourceFilter}
@@ -1421,7 +1567,7 @@ export default function DashboardClient({ data }: Props) {
                     className={inputClass}
                   >
                     <option value="all">全部来源</option>
-                    <option value="manual">manual</option>
+                    <option value="manual">手动导入</option>
                     <option value="codexproxy">codexproxy（codex2api 项目）</option>
                     <option value="cpa">CPA</option>
                     <option value="sub2api">sub2api</option>
@@ -1439,16 +1585,16 @@ export default function DashboardClient({ data }: Props) {
 
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <div className="data-strip rounded-2xl px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">Visible</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">当前显示</p>
                   <p className="mt-1 text-2xl font-semibold tracking-[-0.05em] text-white">{accounts.length}</p>
                 </div>
                 <div className="data-strip rounded-2xl px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">Selected</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">已选择</p>
                   <p className="mt-1 text-2xl font-semibold tracking-[-0.05em] text-white">{selectedIds.length}</p>
                 </div>
                 <div className="data-strip rounded-2xl px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">Source</p>
-                  <p className="mt-1 font-mono text-sm text-cyan-100">{sourceFilter === "all" ? "ALL" : sourceFilter}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">来源</p>
+                  <p className="mt-1 font-mono text-sm text-cyan-100">{sourceFilter === "all" ? "全部" : accountSourceLabels[sourceFilter]}</p>
                 </div>
               </div>
 
@@ -1507,10 +1653,10 @@ export default function DashboardClient({ data }: Props) {
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-1">
                                 <span className="inline-flex rounded-full border border-cyan-200/14 bg-cyan-300/8 px-2.5 py-1 font-mono text-xs text-cyan-100">
-                                  {account.sourceType}
+                                  {accountSourceLabels[account.sourceType]}
                                 </span>
                                 <p className="text-xs text-slate-500">
-                                  {account.hasRefreshToken ? "支持续期" : "无 refresh"}
+                                  {account.hasRefreshToken ? "支持续期" : "无续期凭据"}
                                 </p>
                               </div>
                             </td>
@@ -1522,9 +1668,9 @@ export default function DashboardClient({ data }: Props) {
                                     statusTone[account.status],
                                   )}
                                 >
-                                  {account.status}
+                                  {accountStatusLabels[account.status]}
                                 </span>
-                                <p className="text-xs text-slate-500">远端: {account.remoteStatus || "未记录"}</p>
+                                <p className="text-xs text-slate-500">远端: {translateRemoteStatus(account.remoteStatus)}</p>
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
@@ -1586,6 +1732,111 @@ export default function DashboardClient({ data }: Props) {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.15fr)]">
+                <section className="rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/36 p-4">
+                  <p className={sectionTitleClass}>推送准备</p>
+                  <h3 className="mt-2 text-lg font-semibold text-white">本地补号队列</h3>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <MiniStatus label="已选账号" value={selectedIds.length} />
+                    <MiniStatus label="可推账号" value={selectedActiveAccounts.length} />
+                    <MiniStatus label="本地可用" value={activePoolAccounts.length} />
+                    <MiniStatus label="建议补号" value={recommendedPushTotal} />
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <button type="button" onClick={selectActiveVisible} className={secondaryButton}>
+                      全选可用账号
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => changeWorkspaceView("add-account")}
+                      className={secondaryButton}
+                    >
+                      导入更多账号
+                    </button>
+                  </div>
+                  <p className="mt-4 text-xs leading-6 text-slate-500">
+                    推送前建议只选择“可用”账号；如果中转站缺口大于本地可用数，先去账号导入页补充号池。
+                  </p>
+                </section>
+
+                <section className="rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/36 p-4">
+                  <p className={sectionTitleClass}>中转补号建议</p>
+                  <h3 className="mt-2 text-lg font-semibold text-white">发现异常后直接补推</h3>
+                  <div className="mt-4 grid gap-3">
+                    {relayReplenishPlans.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-4 text-sm text-slate-400">
+                        还没有中转站，先到中转管理页添加。
+                      </div>
+                    ) : null}
+                    {relayReplenishPlans.map((plan) => {
+                      const needAttention =
+                        !plan.remoteStatus ||
+                        plan.recommendedPushCount > 0 ||
+                        plan.warningAccounts > 0 ||
+                        plan.quotaLow;
+                      return (
+                        <article
+                          key={plan.integration.id}
+                          className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                        >
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="text-base font-medium text-white">
+                                  {plan.integration.name}
+                                </h4>
+                                <span
+                                  className={clsx(
+                                    "rounded-full border px-2.5 py-1 text-xs",
+                                    needAttention
+                                      ? "border-amber-300/25 bg-amber-400/12 text-amber-100"
+                                      : "border-emerald-300/25 bg-emerald-400/12 text-emerald-100",
+                                  )}
+                                >
+                                  {needAttention ? "需要关注" : "状态正常"}
+                                </span>
+                              </div>
+                              <p className="mt-2 text-xs leading-6 text-slate-400">
+                                目标 {plan.autoRule?.targetUsableAccounts ?? 0} · 正常{" "}
+                                {plan.remoteStatus
+                                  ? `${plan.remoteStatus.normalAccounts}/${plan.remoteStatus.totalAccounts}`
+                                  : "未检测"}{" "}
+                                · 异常 {plan.warningAccounts} · 5h 剩余{" "}
+                                {formatPercent(plan.remaining5h)}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={isPending || selectedIds.length === 0}
+                              onClick={() =>
+                                runTask(() =>
+                                  callApi("/api/accounts/push", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      integrationId: plan.integration.id,
+                                      accountIds: selectedIds,
+                                    }),
+                                  }),
+                                )
+                              }
+                              className={primaryButton}
+                            >
+                              推送已选 {selectedIds.length} 个
+                            </button>
+                          </div>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                            <MiniStatus label="缺口" value={plan.shortage} />
+                            <MiniStatus label="建议补号" value={plan.recommendedPushCount} />
+                            <MiniStatus label="上次检测" value={plan.remoteStatus ? formatTime(plan.remoteStatus.updatedAt) : "未检测"} />
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
               </div>
               </section>
             ) : null}
