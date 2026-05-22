@@ -850,6 +850,9 @@ export function updateAccountTestResult(
   patch: {
     status: AccountStatus;
     remoteStatus: string;
+    accessToken?: string;
+    refreshToken?: string | null;
+    planType?: string | null;
     metadata?: Record<string, unknown>;
   },
 ) {
@@ -859,10 +862,14 @@ export function updateAccountTestResult(
   const timestamp = nowIso();
   db.prepare(`
     UPDATE accounts
-    SET status = ?, remote_status = ?, metadata_json = ?,
+    SET access_token = ?, refresh_token = ?, plan_type = ?,
+        status = ?, remote_status = ?, metadata_json = ?,
         last_status_checked_at = ?, updated_at = ?
     WHERE id = ?
   `).run(
+    patch.accessToken ?? existing.accessToken,
+    patch.refreshToken !== undefined ? patch.refreshToken : existing.refreshToken,
+    patch.planType !== undefined ? normalizeNullable(patch.planType) : existing.planType,
     patch.status,
     patch.remoteStatus,
     stringifyJson({ ...existing.metadata, ...(patch.metadata ?? {}) }),
@@ -876,6 +883,27 @@ export function updateAccountTestResult(
 export function deleteAccount(id: string) {
   const db = getDb();
   db.prepare("DELETE FROM accounts WHERE id = ?").run(id);
+}
+
+export function deleteAccounts(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.map((item) => item.trim()).filter(Boolean)));
+  if (uniqueIds.length === 0) return 0;
+
+  const db = getDb();
+  let deleted = 0;
+  db.exec("BEGIN");
+  try {
+    const statement = db.prepare("DELETE FROM accounts WHERE id = ?");
+    for (const id of uniqueIds) {
+      const result = statement.run(id);
+      deleted += Number(result.changes);
+    }
+    db.exec("COMMIT");
+    return deleted;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function normalizeStatus(value?: string | null): AccountStatus {

@@ -266,6 +266,10 @@ export const pushRequestSchema = z.object({
   accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
 });
 
+export const accountBulkDeleteSchema = z.object({
+  accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
+});
+
 export const autoReplenishRuleSchema = z.object({
   enabled: z.boolean().default(false),
   triggerMode: z.enum(autoReplenishTriggerModes).default("any"),
@@ -285,4 +289,5 @@ export type ProxyInput = z.infer<typeof proxyInputSchema>;
 export type ManualAccountInput = z.infer<typeof manualAccountInputSchema>;
 export type AccountPatchInput = z.infer<typeof accountPatchSchema>;
 export type PushRequestInput = z.infer<typeof pushRequestSchema>;
+export type AccountBulkDeleteInput = z.infer<typeof accountBulkDeleteSchema>;
 export type AutoReplenishRuleInput = z.infer<typeof autoReplenishRuleSchema>;

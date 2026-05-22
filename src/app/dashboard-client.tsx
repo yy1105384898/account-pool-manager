@@ -723,6 +723,7 @@ export default function DashboardClient({ data }: Props) {
   const accessOnlyAccounts = activePoolAccounts.filter((item) => !item.hasRefreshToken);
   const selectedAccounts = data.accounts.filter((item) => selectedIds.includes(item.id));
   const selectedActiveAccounts = selectedAccounts.filter((item) => item.status === "active");
+  const allVisibleSelected = accounts.length > 0 && accounts.every((item) => selectedIds.includes(item.id));
   const importLineCount = accountImportText
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1050,6 +1051,23 @@ export default function DashboardClient({ data }: Props) {
     const name = account.label || account.email || account.id.slice(0, 8);
     if (!window.confirm(`确认删除账号 ${maskSensitiveText(name)}？`)) return;
     runTask(() => callApi(`/api/accounts/${account.id}`, { method: "DELETE" }));
+  }
+
+  function deleteSelectedAccounts() {
+    if (selectedIds.length === 0) {
+      setNotice({ type: "error", text: "先勾选要删除的账号" });
+      return;
+    }
+    if (!window.confirm(`确认删除已选 ${selectedIds.length} 个账号？`)) return;
+    runTask(async () => {
+      const result = await callApi("/api/accounts/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountIds: selectedIds }),
+      });
+      if (result.ok) setSelectedIds([]);
+      return result;
+    });
   }
 
   function refreshRemoteStatus(integrationId: string) {
@@ -2468,11 +2486,11 @@ export default function DashboardClient({ data }: Props) {
                     <option value="cpa">CPA</option>
                     <option value="sub2api">sub2api</option>
                   </select>
-                  <button onClick={selectAllVisible} className={secondaryButton}>
-                    全选当前
+                  <button onClick={allVisibleSelected ? clearVisibleSelection : selectAllVisible} className={secondaryButton}>
+                    {allVisibleSelected ? "取消全选" : "全选当前"}
                   </button>
-                  <button onClick={() => setSelectedIds([])} className={secondaryButton}>
-                    清空
+                  <button onClick={deleteSelectedAccounts} disabled={isPending || selectedIds.length === 0} className={dangerButton}>
+                    删除已选
                   </button>
                 </div>
               </div>
@@ -2659,12 +2677,8 @@ export default function DashboardClient({ data }: Props) {
                                     检测: {maskSensitiveText(account.lastCheckMessage)}
                                   </p>
                                 ) : null}
-                                {account.modelCount !== null || account.lastCheckLatencyMs !== null ? (
-                                  <p>
-                                    模型 {account.modelCount ?? "-"} · 延迟{" "}
-                                    {account.lastCheckLatencyMs === null ? "-" : `${account.lastCheckLatencyMs}ms`}
-                                  </p>
-                                ) : null}
+                                {account.modelCount !== null ? <p>模型 {account.modelCount}</p> : null}
+                                {account.lastCheckLatencyMs !== null ? <p>检测延迟 {account.lastCheckLatencyMs}ms</p> : null}
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
