@@ -343,6 +343,10 @@ function accountMatchesAutoRule(account: AccountViewModel, rule: AutoReplenishRu
 
 type AccountExportFormat = "pool" | "sub2api" | "cpa" | "txt";
 type AccountImportMode = "refresh" | "access" | "apiKey" | "oauth" | "json";
+type InventoryPlanFilter = "all" | "plus" | "free" | "pro" | "unknown";
+type InventoryAvailabilityFilter = "all" | "active" | "unavailable";
+type InventoryPushFilter = "all" | "pushed" | "unpushed";
+type InventorySortMode = "unpushed_first" | "pushed_first" | "updated_desc";
 
 type Props = {
   data: DashboardData;
@@ -702,8 +706,10 @@ export default function DashboardClient({ data }: Props) {
   const [isPending, startTransition] = useTransition();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | AccountStatus>("all");
-  const [sourceFilter, setSourceFilter] = useState<"all" | AccountViewModel["sourceType"]>("all");
+  const [planTypeFilter, setPlanTypeFilter] = useState<InventoryPlanFilter>("all");
+  const [availabilityFilter, setAvailabilityFilter] = useState<InventoryAvailabilityFilter>("all");
+  const [pushFilter, setPushFilter] = useState<InventoryPushFilter>("all");
+  const [sortMode, setSortMode] = useState<InventorySortMode>("unpushed_first");
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showIntegrationForm, setShowIntegrationForm] = useState(data.integrations.length === 0);
   const [showAccountForm, setShowAccountForm] = useState(false);
@@ -746,23 +752,40 @@ export default function DashboardClient({ data }: Props) {
     {},
   );
 
-  const accounts = data.accounts.filter((item) => {
-    const matchStatus = statusFilter === "all" || item.status === statusFilter;
-    const matchSource = sourceFilter === "all" || item.sourceType === sourceFilter;
-    const haystack = [
-      item.label,
-      item.email,
-      item.accountId,
-      item.userId,
-      item.planType,
-      item.tokenPreview,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    const matchSearch = !deferredSearch || haystack.includes(deferredSearch);
-    return matchStatus && matchSource && matchSearch;
-  });
+  const accounts = data.accounts
+    .filter((item) => {
+      const normalizedPlan = normalizePlanType(item.planType);
+      const pushed = (item.pushCount ?? 0) > 0;
+      const matchPlan =
+        planTypeFilter === "all" ||
+        (planTypeFilter === "unknown" ? !normalizedPlan : normalizedPlan === planTypeFilter);
+      const matchAvailability =
+        availabilityFilter === "all" ||
+        (availabilityFilter === "active" ? item.status === "active" : item.status !== "active");
+      const matchPush =
+        pushFilter === "all" ||
+        (pushFilter === "pushed" ? pushed : !pushed);
+      const haystack = [
+        item.label,
+        item.email,
+        item.accountId,
+        item.userId,
+        item.planType,
+        item.tokenPreview,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const matchSearch = !deferredSearch || haystack.includes(deferredSearch);
+      return matchPlan && matchAvailability && matchPush && matchSearch;
+    })
+    .sort((left, right) => {
+      const leftPushed = (left.pushCount ?? 0) > 0 ? 1 : 0;
+      const rightPushed = (right.pushCount ?? 0) > 0 ? 1 : 0;
+      if (sortMode === "unpushed_first" && leftPushed !== rightPushed) return leftPushed - rightPushed;
+      if (sortMode === "pushed_first" && leftPushed !== rightPushed) return rightPushed - leftPushed;
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    });
 
   const activeRate = data.summary.totalAccounts
     ? Math.round((data.summary.activeAccounts / data.summary.totalAccounts) * 100)
@@ -1169,6 +1192,22 @@ export default function DashboardClient({ data }: Props) {
       if (result.ok) setSelectedIds([]);
       return result;
     });
+  }
+
+  function updateSelectedAccountStatus(status: "active" | "disabled") {
+    if (selectedIds.length === 0) {
+      setNotice({ type: "error", text: "先勾选账号" });
+      return;
+    }
+    const action = status === "active" ? "启用" : "停用";
+    if (!window.confirm(`确认${action}已选 ${selectedIds.length} 个账号？`)) return;
+    runTask(() =>
+      callApi("/api/accounts/bulk-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountIds: selectedIds, status }),
+      }),
+    );
   }
 
   function refreshRemoteStatus(integrationId: string) {
@@ -2563,7 +2602,7 @@ export default function DashboardClient({ data }: Props) {
                     当前显示 {accounts.length} / {data.accounts.length} 个账号，已选 {selectedIds.length} 个。后台会定时检测套餐和可用状态。
                   </p>
                 </div>
-                <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_auto_auto]">
+                <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_150px_150px_150px_160px]">
                   <input
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
@@ -2571,34 +2610,53 @@ export default function DashboardClient({ data }: Props) {
                     className={inputClass}
                   />
                   <select
-                    value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+                    value={planTypeFilter}
+                    onChange={(event) => setPlanTypeFilter(event.target.value as InventoryPlanFilter)}
                     className={inputClass}
                   >
-                    <option value="all">全部状态</option>
-                    <option value="active">可用</option>
-                    <option value="inactive">未启用</option>
-                    <option value="disabled">已停用</option>
-                    <option value="expired">已过期</option>
-                    <option value="banned">已封禁</option>
-                    <option value="error">异常</option>
-                    <option value="quota_exhausted">额度耗尽</option>
-                    <option value="refreshing">刷新中</option>
-                    <option value="unknown">未知</option>
+                    <option value="all">全部套餐</option>
+                    <option value="plus">Plus</option>
+                    <option value="free">Free</option>
+                    <option value="pro">Pro</option>
+                    <option value="unknown">未知套餐</option>
                   </select>
                   <select
-                    value={sourceFilter}
-                    onChange={(event) => setSourceFilter(event.target.value as typeof sourceFilter)}
+                    value={availabilityFilter}
+                    onChange={(event) => setAvailabilityFilter(event.target.value as InventoryAvailabilityFilter)}
                     className={inputClass}
                   >
-                    <option value="all">全部来源</option>
-                    <option value="manual">手动导入</option>
-                    <option value="codexproxy">codexproxy（codex2api 项目）</option>
-                    <option value="cpa">CPA</option>
-                    <option value="sub2api">sub2api</option>
+                    <option value="all">全部可用性</option>
+                    <option value="active">仅可用</option>
+                    <option value="unavailable">仅不可用</option>
                   </select>
+                  <select
+                    value={pushFilter}
+                    onChange={(event) => setPushFilter(event.target.value as InventoryPushFilter)}
+                    className={inputClass}
+                  >
+                    <option value="all">全部推送状态</option>
+                    <option value="unpushed">未推送</option>
+                    <option value="pushed">已推送</option>
+                  </select>
+                  <select
+                    value={sortMode}
+                    onChange={(event) => setSortMode(event.target.value as InventorySortMode)}
+                    className={inputClass}
+                  >
+                    <option value="unpushed_first">未推送优先</option>
+                    <option value="pushed_first">已推送优先</option>
+                    <option value="updated_desc">最近更新优先</option>
+                  </select>
+                </div>
+                <div className="flex flex-wrap gap-2">
                   <button onClick={allVisibleSelected ? clearVisibleSelection : selectAllVisible} className={secondaryButton}>
                     {allVisibleSelected ? "取消全选" : "全选当前"}
+                  </button>
+                  <button onClick={() => updateSelectedAccountStatus("active")} disabled={isPending || selectedIds.length === 0} className={secondaryButton}>
+                    启用已选
+                  </button>
+                  <button onClick={() => updateSelectedAccountStatus("disabled")} disabled={isPending || selectedIds.length === 0} className={secondaryButton}>
+                    停用已选
                   </button>
                   <button onClick={deleteSelectedAccounts} disabled={isPending || selectedIds.length === 0} className={dangerButton}>
                     删除已选
@@ -2636,8 +2694,14 @@ export default function DashboardClient({ data }: Props) {
                   <p className="mt-1 text-2xl font-semibold tracking-[-0.05em] text-white">{selectedIds.length}</p>
                 </div>
                 <div className="data-strip rounded-2xl px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">来源</p>
-                  <p className="mt-1 font-mono text-sm text-cyan-100">{sourceFilter === "all" ? "全部" : accountSourceLabels[sourceFilter]}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-cyan-100/55">排序</p>
+                  <p className="mt-1 font-mono text-sm text-cyan-100">
+                    {sortMode === "unpushed_first"
+                      ? "未推送优先"
+                      : sortMode === "pushed_first"
+                        ? "已推送优先"
+                        : "最近更新"}
+                  </p>
                 </div>
               </div>
 

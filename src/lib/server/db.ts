@@ -947,6 +947,32 @@ export function deleteAccounts(ids: string[]) {
   }
 }
 
+export function updateAccountsStatus(ids: string[], status: AccountStatus) {
+  const uniqueIds = Array.from(new Set(ids.map((item) => item.trim()).filter(Boolean)));
+  if (uniqueIds.length === 0) return 0;
+
+  const db = getDb();
+  const timestamp = nowIso();
+  let updated = 0;
+  db.exec("BEGIN");
+  try {
+    const statement = db.prepare(`
+      UPDATE accounts
+      SET status = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    for (const id of uniqueIds) {
+      const result = statement.run(status, timestamp, id);
+      updated += Number(result.changes);
+    }
+    db.exec("COMMIT");
+    return updated;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function normalizeStatus(value?: string | null): AccountStatus {
   const normalized = value?.trim().toLowerCase();
   switch (normalized) {

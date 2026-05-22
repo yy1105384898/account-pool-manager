@@ -273,6 +273,11 @@ export const accountBulkDeleteSchema = z.object({
   accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
 });
 
+export const accountBulkStatusSchema = z.object({
+  accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
+  status: z.enum(["active", "disabled"]),
+});
+
 export const autoReplenishRuleSchema = z.object({
   enabled: z.boolean().default(false),
   triggerMode: z.enum(autoReplenishTriggerModes).default("any"),
@@ -294,4 +299,5 @@ export type ManualAccountInput = z.infer<typeof manualAccountInputSchema>;
 export type AccountPatchInput = z.infer<typeof accountPatchSchema>;
 export type PushRequestInput = z.infer<typeof pushRequestSchema>;
 export type AccountBulkDeleteInput = z.infer<typeof accountBulkDeleteSchema>;
+export type AccountBulkStatusInput = z.infer<typeof accountBulkStatusSchema>;
 export type AutoReplenishRuleInput = z.infer<typeof autoReplenishRuleSchema>;
