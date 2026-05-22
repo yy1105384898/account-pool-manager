@@ -71,6 +71,8 @@ const accountSourceLabels: Record<AccountViewModel["sourceType"], string> = {
 
 const remoteStatusLabels: Record<string, string> = {
   active: "可用",
+  available: "可用",
+  subscription_checked: "可用",
   normal: "正常",
   inactive: "未启用",
   disabled: "已停用",
@@ -79,6 +81,8 @@ const remoteStatusLabels: Record<string, string> = {
   error: "异常",
   invalid: "失效",
   unauthorized: "鉴权失败",
+  subscription_unavailable: "订阅未返回",
+  check_error: "检测失败",
   quota_exhausted: "额度耗尽",
   exhausted: "额度耗尽",
   rate_limited: "限流",
@@ -273,6 +277,22 @@ function read5hRemaining(summary?: RemoteStatusSummary | null) {
 function formatPercent(value: number | null) {
   if (typeof value !== "number" || Number.isNaN(value)) return "未返回";
   return `${Math.round(value * 10) / 10}%`;
+}
+
+function formatPlanType(value?: string | null) {
+  const text = value?.trim().toLowerCase();
+  if (!text) return "未知";
+  if (text.includes("plus")) return "Plus";
+  if (text.includes("pro")) return "Pro";
+  if (text.includes("team")) return "Team";
+  if (text.includes("enterprise")) return "Enterprise";
+  if (text.includes("free")) return "Free";
+  return value?.trim() || "未知";
+}
+
+function formatAccountUsability(status: AccountStatus) {
+  if (status === "active") return "可用";
+  return accountStatusLabels[status];
 }
 
 function translateRemoteStatus(value?: string | null) {
@@ -1042,10 +1062,6 @@ export default function DashboardClient({ data }: Props) {
         body: JSON.stringify({ enabled }),
       }),
     );
-  }
-
-  function testAccount(accountId: string) {
-    runTask(() => callApi(`/api/accounts/${accountId}/test`, { method: "POST" }));
   }
 
   function saveAccountEdit(formData: FormData) {
@@ -2447,9 +2463,6 @@ export default function DashboardClient({ data }: Props) {
                   </div>
 
                   <div className="flex flex-wrap justify-end gap-2 border-t border-cyan-200/12 px-5 py-4">
-                    <button type="button" onClick={() => testAccount(editingAccount.id)} disabled={isPending} className={secondaryButton}>
-                      测试账号
-                    </button>
                     <button type="button" onClick={() => setEditingAccount(null)} className={secondaryButton}>
                       取消
                     </button>
@@ -2470,7 +2483,7 @@ export default function DashboardClient({ data }: Props) {
                     库存列表
                   </h2>
                   <p className="mt-2 text-sm text-slate-400">
-                    当前显示 {accounts.length} / {data.accounts.length} 个账号，已选 {selectedIds.length} 个。
+                    当前显示 {accounts.length} / {data.accounts.length} 个账号，已选 {selectedIds.length} 个。后台会定时检测套餐和可用状态。
                   </p>
                 </div>
                 <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_auto_auto]">
@@ -2572,19 +2585,16 @@ export default function DashboardClient({ data }: Props) {
                         <th className="px-4 py-3">来源</th>
                         <th className="px-4 py-3">计划</th>
                         <th className="px-4 py-3">状态</th>
-                        <th className="px-4 py-3">请求(7D)</th>
                         <th className="px-4 py-3">用量</th>
-                        <th className="px-4 py-3">成本</th>
-                        <th className="px-4 py-3">Token</th>
                         <th className="px-4 py-3">标识</th>
-                        <th className="px-4 py-3">同步</th>
+                        <th className="px-4 py-3">检测 / 推送</th>
                         <th className="px-4 py-3">操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       {accounts.length === 0 ? (
                         <tr>
-                          <td colSpan={12} className="px-4 py-12 text-center text-sm text-slate-500">
+                          <td colSpan={9} className="px-4 py-12 text-center text-sm text-slate-500">
                             没有匹配账号。
                           </td>
                         </tr>
@@ -2626,16 +2636,11 @@ export default function DashboardClient({ data }: Props) {
                                 <p className="text-xs text-slate-500">
                                   {account.hasRefreshToken ? "支持续期" : "无续期凭据"}
                                 </p>
-                                {account.lastPushedAt ? (
-                                  <p className="inline-flex rounded-full border border-amber-300/25 bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-100">
-                                    已使用{account.pushCount ? ` ${account.pushCount} 次` : ""}
-                                  </p>
-                                ) : null}
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
                               <span className="inline-flex rounded-lg border border-blue-300/25 bg-blue-400/12 px-2.5 py-1 text-xs font-semibold text-blue-100">
-                                {account.planType || "未知"}
+                                {formatPlanType(account.planType)}
                               </span>
                             </td>
                             <td className="px-4 py-4 align-top">
@@ -2646,16 +2651,9 @@ export default function DashboardClient({ data }: Props) {
                                     statusTone[account.status],
                                   )}
                                 >
-                                  {accountStatusLabels[account.status]}
+                                  {formatAccountUsability(account.status)}
                                 </span>
-                                <p className="text-xs text-slate-500">远端: {translateRemoteStatus(account.remoteStatus)}</p>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top">
-                              <div className="font-mono text-xs">
-                                <span className="text-emerald-300">{account.requestCount7d ?? "-"}</span>
-                                <span className="px-1 text-slate-600">/</span>
-                                <span className="text-rose-300">{account.riskCount ?? 0}</span>
+                                <p className="text-xs text-slate-500">检测: {translateRemoteStatus(account.remoteStatus)}</p>
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
@@ -2671,18 +2669,6 @@ export default function DashboardClient({ data }: Props) {
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
-                              <div className="space-y-1 text-xs text-slate-400">
-                                <p>5h: {account.cost5h === null ? "-" : `$${account.cost5h}`}</p>
-                                <p>7d: {account.cost7d === null ? "-" : `$${account.cost7d}`}</p>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top">
-                              <div className="space-y-1">
-                                <p className="font-mono text-xs text-slate-300">{account.tokenPreview}</p>
-                                <p className="text-xs text-slate-500">{account.hasRefreshToken ? "RT" : "AT/API"}</p>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top">
                               <div className="space-y-1 font-mono text-xs text-slate-400">
                                 <p>acc: {maskIdentifier(account.accountId)}</p>
                                 <p>user: {maskIdentifier(account.userId)}</p>
@@ -2690,9 +2676,9 @@ export default function DashboardClient({ data }: Props) {
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-1 text-xs text-slate-500">
-                                <p>导入: {formatTime(account.lastImportedAt)}</p>
-                                <p>状态: {formatTime(account.lastStatusCheckedAt)}</p>
-                                <p>推送: {formatTime(account.lastPushedAt)}</p>
+                                <p>检测: {formatTime(account.lastStatusCheckedAt)}</p>
+                                <p>推送: {account.pushCount ?? 0} 次</p>
+                                <p>最后推送: {formatTime(account.lastPushedAt)}</p>
                                 {account.lastCheckMessage ? (
                                   <p className="max-w-[220px] text-cyan-100">
                                     检测: {maskSensitiveText(account.lastCheckMessage)}
@@ -2704,14 +2690,6 @@ export default function DashboardClient({ data }: Props) {
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  disabled={isPending}
-                                  onClick={() => testAccount(account.id)}
-                                  className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1.5 text-xs text-emerald-100 transition hover:bg-emerald-400/18 disabled:opacity-60"
-                                >
-                                  测试
-                                </button>
                                 <button
                                   type="button"
                                   disabled={isPending}

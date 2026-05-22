@@ -4,5 +4,9 @@ export async function register() {
   const { ensureAutoReplenishScheduler } = await import(
     "./lib/server/auto-replenish"
   );
+  const { ensureAccountCheckScheduler } = await import(
+    "./lib/server/account-check"
+  );
   ensureAutoReplenishScheduler();
+  ensureAccountCheckScheduler();
 }
