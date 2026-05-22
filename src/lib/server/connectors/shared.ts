@@ -59,11 +59,11 @@ function uniqueGroupList(groups: string[]) {
 
 function normalizePlanKey(value?: string | null) {
   const normalized = value?.trim().toLowerCase();
-  if (!normalized) return "default" as const;
+  if (!normalized) return null;
   if (normalized.includes("plus")) return "plus" as const;
   if (normalized.includes("pro")) return "pro" as const;
   if (normalized.includes("free")) return "free" as const;
-  return "default" as const;
+  return null;
 }
 
 function hasPlanGroups(planGroupMap?: Partial<PlanGroupMap> | null) {
@@ -81,14 +81,13 @@ export function resolveAccountPushGroups(
   const planGroupMap = options?.planGroupMap;
   if (hasPlanGroups(planGroupMap)) {
     const planKey = normalizePlanKey(account.planType);
+    if (!planKey) return [];
+
     const routedGroups = cleanGroupList(planGroupMap?.[planKey]);
+    if (routedGroups.length === 0) return [];
+
     const defaultGroups = cleanGroupList(planGroupMap?.default);
-
-    if (routedGroups.length > 0) {
-      return uniqueGroupList([...routedGroups, ...defaultGroups]);
-    }
-
-    if (defaultGroups.length > 0) return defaultGroups;
+    return uniqueGroupList([...routedGroups, ...defaultGroups]);
   }
 
   const targetGroups = cleanGroupList(options?.targetGroups);

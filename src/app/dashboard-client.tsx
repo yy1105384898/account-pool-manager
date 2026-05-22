@@ -761,7 +761,7 @@ function AutoReplenishPanel({
                 ))}
               </div>
               <p className="text-[11px] leading-5 text-slate-500">
-                Image 组建议填 image；Plus / Free / Pro 会同时加入对应套餐组和 Image 组，未知套餐只进 Image 组。
+                Image 组作为附加组；只给已填写套餐组的账号追加，未填写对应套餐组和未知套餐都不进组。
               </p>
             </div>
           </RuleField>
