@@ -286,9 +286,9 @@ function normalizePlanType(value: string | null) {
   return value?.trim() ?? null;
 }
 
-function buildMessage(snapshot: AccountSnapshot, latencyMs: number) {
+function buildMessage(snapshot: AccountSnapshot) {
   const plan = normalizePlanType(snapshot.planType) ?? "未返回";
-  return `套餐 ${plan}，状态可用，延迟 ${latencyMs}ms`;
+  return `套餐 ${plan}`;
 }
 
 function buildSnapshotMetadata(snapshot: AccountSnapshot, message: string, latencyMs: number) {
@@ -374,7 +374,7 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
       throw new Error(firstError);
     }
 
-    const message = buildMessage(snapshot, latencyMs);
+    const message = buildMessage(snapshot);
     const planType = normalizePlanType(snapshot.planType) ?? account.planType;
     updateAccountTestResult(id, {
       status: statusFromSnapshot(snapshot),

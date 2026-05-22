@@ -295,6 +295,13 @@ function formatAccountUsability(status: AccountStatus) {
   return accountStatusLabels[status];
 }
 
+function formatCheckMessage(value?: string | null) {
+  if (!value) return "";
+  const planMatch = value.match(/套餐\s*([A-Za-z\u4e00-\u9fa5]+)/);
+  if (planMatch?.[1]) return `套餐 ${formatPlanType(planMatch[1])}`;
+  return value;
+}
+
 function translateRemoteStatus(value?: string | null) {
   if (!value) return "未记录";
   return remoteStatusLabels[value.toLowerCase()] ?? value;
@@ -1982,11 +1989,21 @@ export default function DashboardClient({ data }: Props) {
 
                 <div className="mt-5 overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/34">
                   <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
+                    <table className="min-w-[1040px] table-fixed text-left text-sm">
+                      <colgroup>
+                        <col className="w-[280px]" />
+                        <col className="w-[96px]" />
+                        <col className="w-[190px]" />
+                        <col className="w-[140px]" />
+                        <col className="w-[90px]" />
+                        <col className="w-[180px]" />
+                        <col className="w-[110px]" />
+                        <col className="w-[150px]" />
+                      </colgroup>
                       <thead className="bg-cyan-950/80 font-mono text-[11px] uppercase tracking-[0.22em] text-cyan-100">
                         <tr>
                           <th className="px-4 py-3">代理</th>
-                          <th className="w-24 px-4 py-3">状态</th>
+                          <th className="px-4 py-3">状态</th>
                           <th className="px-4 py-3">地区</th>
                           <th className="px-4 py-3">出口 IP</th>
                           <th className="px-4 py-3">延迟</th>
@@ -2009,9 +2026,9 @@ export default function DashboardClient({ data }: Props) {
                               <p className="font-medium text-white">{proxy.name}</p>
                               <p className="mt-1 break-all font-mono text-xs text-slate-500">{maskSensitiveText(proxy.url)}</p>
                             </td>
-                            <td className="w-24 px-4 py-4">
+                            <td className="px-4 py-4">
                               <span className={clsx(
-                                "inline-flex min-w-[58px] justify-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs",
+                                "inline-flex w-[64px] justify-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs leading-none",
                                 proxy.enabled
                                   ? "border-emerald-300/25 bg-emerald-400/12 text-emerald-100"
                                   : "border-white/10 bg-white/5 text-slate-400",
@@ -2619,9 +2636,9 @@ export default function DashboardClient({ data }: Props) {
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-1">
                                 <p className="font-medium tracking-[-0.025em] text-slate-100">
-                                  {maskSensitiveText(account.label || account.email || "未命名账号")}
+                                  {account.label || account.email || "未命名账号"}
                                 </p>
-                                <p className="text-xs text-slate-500">{account.email ? maskEmail(account.email) : "无邮箱"}</p>
+                                <p className="text-xs text-slate-500">{account.email || "无邮箱"}</p>
                                 {account.notes ? (
                                   <p className="max-w-[260px] text-xs text-slate-500">{maskSensitiveText(account.notes)}</p>
                                 ) : null}
@@ -2676,11 +2693,10 @@ export default function DashboardClient({ data }: Props) {
                                 )}
                                 {account.lastCheckMessage ? (
                                   <p className="max-w-[220px] text-cyan-100">
-                                    检测: {maskSensitiveText(account.lastCheckMessage)}
+                                    检测: {formatCheckMessage(account.lastCheckMessage)}
                                   </p>
                                 ) : null}
                                 {account.modelCount !== null ? <p>模型 {account.modelCount}</p> : null}
-                                {account.lastCheckLatencyMs !== null ? <p>检测延迟 {account.lastCheckLatencyMs}ms</p> : null}
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
