@@ -23,6 +23,12 @@
 # misc
 .DS_Store
 *.pem
+docs-workspace.png
+
+# local runtime data
+/data/*.sqlite
+/data/*.sqlite-shm
+/data/*.sqlite-wal
 
 # debug
 npm-debug.log*

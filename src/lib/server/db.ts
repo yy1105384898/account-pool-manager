@@ -640,7 +640,10 @@ export function listActivityLogs(limit = 12) {
 
 export function clearActivityLogs(options?: { keepLatest?: number }) {
   const db = getDb();
-  const keepLatest = Math.max(0, Math.min(options?.keepLatest ?? 0, 1000));
+  const requestedKeepLatest = options?.keepLatest ?? 0;
+  const keepLatest = Number.isFinite(requestedKeepLatest)
+    ? Math.max(0, Math.min(requestedKeepLatest, 1000))
+    : 0;
 
   if (keepLatest > 0) {
     db.prepare(`
@@ -730,9 +733,10 @@ function listAccountPushSummaries() {
   const db = getDb();
   const rows = db
     .prepare(`
-      SELECT account_id, SUM(push_count) AS push_count, MAX(last_pushed_at) AS last_pushed_at
-      FROM account_integration_pushes
-      GROUP BY account_id
+      SELECT p.account_id, SUM(p.push_count) AS push_count, MAX(p.last_pushed_at) AS last_pushed_at
+      FROM account_integration_pushes p
+      INNER JOIN accounts a ON a.id = p.account_id
+      GROUP BY p.account_id
     `)
     .all() as Array<Record<string, unknown>>;
 
@@ -909,6 +913,7 @@ export function updateAccountTestResult(
 
 export function deleteAccount(id: string) {
   const db = getDb();
+  db.prepare("DELETE FROM account_integration_pushes WHERE account_id = ?").run(id);
   db.prepare("DELETE FROM accounts WHERE id = ?").run(id);
 }
 
@@ -921,7 +926,9 @@ export function deleteAccounts(ids: string[]) {
   db.exec("BEGIN");
   try {
     const statement = db.prepare("DELETE FROM accounts WHERE id = ?");
+    const pushStatement = db.prepare("DELETE FROM account_integration_pushes WHERE account_id = ?");
     for (const id of uniqueIds) {
+      pushStatement.run(id);
       const result = statement.run(id);
       deleted += Number(result.changes);
     }
