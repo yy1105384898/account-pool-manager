@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAccountsByIds, listAccounts } from "@/lib/server/db";
 import type { AccountRecord } from "@/lib/types";
 
-type ExportFormat = "pool" | "sub2api" | "cpa";
+type ExportFormat = "pool" | "sub2api" | "cpa" | "txt";
 
 function compact<T extends Record<string, unknown>>(record: T) {
   return Object.fromEntries(
@@ -78,8 +78,15 @@ function exportCpa(accounts: AccountRecord[]) {
   };
 }
 
+function exportTxt(accounts: AccountRecord[]) {
+  return accounts
+    .map((account) => account.refreshToken?.trim() || account.accessToken.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function resolveFormat(value: string | null): ExportFormat {
-  return value === "sub2api" || value === "cpa" ? value : "pool";
+  return value === "sub2api" || value === "cpa" || value === "txt" ? value : "pool";
 }
 
 function resolveAccounts(searchParams: URLSearchParams) {
@@ -97,6 +104,15 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const format = resolveFormat(url.searchParams.get("format"));
   const accounts = resolveAccounts(url.searchParams);
+  if (format === "txt") {
+    return new Response(exportTxt(accounts), {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Disposition": `attachment; filename="account-pool-txt-${new Date().toISOString().slice(0, 10)}.txt"`,
+      },
+    });
+  }
+
   const payload =
     format === "sub2api" ? exportSub2Api(accounts) : format === "cpa" ? exportCpa(accounts) : exportPool(accounts);
 

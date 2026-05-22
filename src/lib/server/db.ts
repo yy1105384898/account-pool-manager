@@ -529,6 +529,11 @@ export function createManualAccount(input: ManualAccountInput) {
   const db = getDb();
   const timestamp = nowIso();
   const id = randomUUID();
+  const metadata = JSON.stringify({
+    proxyUrl: normalizeNullable(input.proxyUrl),
+    baseUrl: normalizeNullable(input.baseUrl),
+    models: input.models ?? [],
+  });
 
   db.prepare(`
     INSERT INTO accounts (
@@ -536,7 +541,7 @@ export function createManualAccount(input: ManualAccountInput) {
       user_id, access_token, refresh_token, plan_type, status, remote_status,
       notes, metadata_json, last_imported_at, last_status_checked_at, last_pushed_at,
       created_at, updated_at
-    ) VALUES (?, 'manual', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', NULL, NULL, NULL, ?, ?)
+    ) VALUES (?, 'manual', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
   `).run(
     id,
     normalizeNullable(input.email),
@@ -549,6 +554,7 @@ export function createManualAccount(input: ManualAccountInput) {
     input.status,
     input.status,
     normalizeNullable(input.notes),
+    metadata,
     timestamp,
     timestamp,
   );

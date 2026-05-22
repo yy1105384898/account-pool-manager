@@ -215,6 +215,9 @@ export const manualAccountInputSchema = z.object({
   refreshToken: z.string().trim().optional(),
   status: z.enum(accountStatuses).default("active"),
   notes: trimmedOptional,
+  proxyUrl: z.url("代理地址格式不正确").optional().or(z.literal("")),
+  baseUrl: z.url("Base URL 格式不正确").optional().or(z.literal("")),
+  models: z.array(z.string().trim().min(1)).optional(),
 });
 
 export const accountPatchSchema = z.object({

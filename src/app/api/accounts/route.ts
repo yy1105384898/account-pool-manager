@@ -122,6 +122,7 @@ function parseJsonAccounts(value: string): ManualAccountInput[] {
     const refreshToken = readNestedString(record, ["refreshToken", "refresh_token", "refresh", "rt"]);
     const email = readNestedString(record, ["email", "account_email", "user_email", "mail"]);
     const label = readNestedString(record, ["label", "name", "title"]) || email || `导入账号 ${index + 1}`;
+    const modelText = readNestedString(record, ["models", "model", "modelList"]);
     if (!accessToken && !refreshToken) return [];
     return [
       {
@@ -140,6 +141,9 @@ function parseJsonAccounts(value: string): ManualAccountInput[] {
         refreshToken,
         status: readStatus(record),
         notes: "JSON 导入",
+        proxyUrl: readNestedString(record, ["proxyUrl", "proxy_url", "proxy"]),
+        baseUrl: readNestedString(record, ["baseUrl", "base_url", "api_base", "endpoint"]),
+        models: modelText ? modelText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean) : [],
       },
     ];
   });
@@ -154,19 +158,31 @@ function buildManualAccounts(payload: Record<string, unknown>): ManualAccountInp
   }
 
   if ((importMode === "refresh" || importMode === "access" || importMode === "apiKey" || importMode === "oauth") && rawText) {
+    const proxyUrl = typeof payload.proxyUrl === "string" ? payload.proxyUrl : "";
+    const baseUrl = typeof payload.baseUrl === "string" ? payload.baseUrl : "";
+    const sharedRefreshToken = typeof payload.refreshToken === "string" ? payload.refreshToken.trim() : "";
+    const sharedNotes = typeof payload.notes === "string" ? payload.notes.trim() : "";
+    const models =
+      typeof payload.models === "string"
+        ? payload.models.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)
+        : Array.isArray(payload.models)
+          ? payload.models.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []))
+          : [];
     return normalizeLines(rawText).map((value, index) => ({
-      label: `批量账号 ${index + 1}`,
+      label: readString(payload, "label") || `批量账号 ${index + 1}`,
       accessToken: importMode === "refresh" ? `refresh:${value}` : value,
-      refreshToken: importMode === "refresh" ? value : "",
+      refreshToken: importMode === "refresh" ? value : sharedRefreshToken,
       status: "active" as const,
-      notes:
-        importMode === "apiKey"
+      notes: sharedNotes || (importMode === "apiKey"
           ? "API Key 导入"
           : importMode === "access"
             ? "Access Token 导入"
             : importMode === "oauth"
               ? "OAuth 导入"
-              : "Refresh Token 导入",
+              : "Refresh Token 导入"),
+      proxyUrl,
+      baseUrl,
+      models,
     }));
   }
 

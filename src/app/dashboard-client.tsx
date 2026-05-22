@@ -10,6 +10,8 @@ import {
   ArrowUpRight,
   CheckCircle2,
   CloudUpload,
+  Fingerprint,
+  KeyRound,
   Cpu,
   Database,
   type LucideIcon,
@@ -102,6 +104,14 @@ const importModeLabels: Record<"refresh" | "access" | "apiKey" | "oauth" | "json
   oauth: "OAuth 授权",
   json: "JSON 导入",
 };
+
+const importModeTabs: Array<{ value: AccountImportMode; label: string; icon: LucideIcon }> = [
+  { value: "refresh", label: "Refresh Token", icon: RefreshCw },
+  { value: "access", label: "Access Token", icon: Fingerprint },
+  { value: "apiKey", label: "API Key", icon: KeyRound },
+  { value: "oauth", label: "OAuth 授权", icon: KeyRound },
+  { value: "json", label: "JSON 导入", icon: Database },
+];
 
 const autoRunStatusTone: Record<NonNullable<AutoReplenishRuleRecord["lastStatus"]>, string> = {
   success: "border-emerald-300/25 bg-emerald-400/12 text-emerald-100",
@@ -232,7 +242,8 @@ function translateAutoRunStatus(value?: AutoReplenishRuleRecord["lastStatus"] | 
   return autoRunStatusLabels[value] ?? value;
 }
 
-type AccountExportFormat = "pool" | "sub2api" | "cpa";
+type AccountExportFormat = "pool" | "sub2api" | "cpa" | "txt";
+type AccountImportMode = "refresh" | "access" | "apiKey" | "oauth" | "json";
 
 type Props = {
   data: DashboardData;
@@ -296,6 +307,21 @@ function MiniStatus({ label, value }: { label: string; value: string | number })
       <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{label}</p>
       <p className="mt-1 font-mono text-sm text-cyan-100">{value}</p>
     </div>
+  );
+}
+
+function ImportField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-medium text-slate-300">
+      <span>{label}</span>
+      {children}
+    </label>
   );
 }
 
@@ -565,10 +591,13 @@ export default function DashboardClient({ data }: Props) {
   const [sourceFilter, setSourceFilter] = useState<"all" | AccountViewModel["sourceType"]>("all");
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showIntegrationForm, setShowIntegrationForm] = useState(data.integrations.length === 0);
-  const [showAccountForm, setShowAccountForm] = useState(true);
+  const [showAccountForm, setShowAccountForm] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState<IntegrationType>("sub2api");
-  const [accountImportMode, setAccountImportMode] = useState<"refresh" | "access" | "apiKey" | "oauth" | "json">("refresh");
+  const [accountImportMode, setAccountImportMode] = useState<AccountImportMode>("refresh");
   const [accountImportText, setAccountImportText] = useState("");
+  const [apiModelText, setApiModelText] = useState("");
+  const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState("");
+  const [oauthVerifier, setOauthVerifier] = useState("");
   const [remoteStatusOverrides, setRemoteStatusOverrides] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -766,7 +795,7 @@ export default function DashboardClient({ data }: Props) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `account-pool-${format}-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `account-pool-${format}-${new Date().toISOString().slice(0, 10)}.${format === "txt" ? "txt" : "json"}`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -874,24 +903,54 @@ export default function DashboardClient({ data }: Props) {
 
   function submitManualAccount(formData: FormData) {
     const bulkText = accountImportText || String(formData.get("bulkText") || "");
-    const payload = bulkText.trim()
-      ? {
-          importMode: accountImportMode,
-          bulkText,
-        }
-      : {
-          label: String(formData.get("label") || ""),
-          email: String(formData.get("email") || ""),
-          accountId: String(formData.get("accountId") || ""),
-          userId: String(formData.get("userId") || ""),
-          planType: String(formData.get("planType") || ""),
-          accessToken: String(formData.get("accessToken") || ""),
-          refreshToken: String(formData.get("refreshToken") || ""),
-          status: String(formData.get("status") || "active"),
-          notes: String(formData.get("notes") || ""),
-        };
+    const basePayload = {
+      label: String(formData.get("label") || ""),
+      proxyUrl: String(formData.get("proxyUrl") || ""),
+      baseUrl: String(formData.get("baseUrl") || ""),
+      models: apiModelText,
+    };
 
     runTask(async () => {
+      let payload: Record<string, unknown> = bulkText.trim()
+        ? {
+            importMode: accountImportMode,
+            bulkText,
+            ...basePayload,
+          }
+        : {
+            ...basePayload,
+            email: String(formData.get("email") || ""),
+            accountId: String(formData.get("accountId") || ""),
+            userId: String(formData.get("userId") || ""),
+            planType: String(formData.get("planType") || ""),
+            accessToken: String(formData.get("accessToken") || ""),
+            refreshToken: String(formData.get("refreshToken") || ""),
+            status: String(formData.get("status") || "active"),
+            notes: String(formData.get("notes") || ""),
+            models: apiModelText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean),
+          };
+
+      if (accountImportMode === "oauth" && bulkText.trim() && oauthVerifier) {
+        const tokenResponse = await fetch("/api/oauth/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: bulkText, verifier: oauthVerifier }),
+        });
+        const tokenPayload = (await tokenResponse.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; accessToken?: string; refreshToken?: string }
+          | null;
+        if (!tokenResponse.ok || tokenPayload?.ok === false || !tokenPayload?.accessToken) {
+          return { ok: false, error: tokenPayload?.error ?? "OAuth 换取 token 失败" };
+        }
+        payload = {
+          ...basePayload,
+          importMode: "access",
+          bulkText: tokenPayload.accessToken,
+          refreshToken: tokenPayload.refreshToken ?? "",
+          notes: "OAuth 授权导入",
+        };
+      }
+
       const result = await callApi("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -900,8 +959,55 @@ export default function DashboardClient({ data }: Props) {
       if (result.ok) {
         setShowAccountForm(false);
         setAccountImportText("");
+        setApiModelText("");
+        setOauthAuthorizeUrl("");
+        setOauthVerifier("");
       }
       return result;
+    });
+  }
+
+  function generateOAuthLink(formData: FormData) {
+    runTask(async () => {
+      const result = await fetch("/api/oauth/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: String(formData.get("label") || ""),
+          proxyUrl: String(formData.get("proxyUrl") || ""),
+        }),
+      });
+      const payload = (await result.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; message?: string; authorizeUrl?: string; verifier?: string }
+        | null;
+      if (!result.ok || payload?.ok === false || !payload?.authorizeUrl) {
+        return { ok: false, error: payload?.error ?? "生成授权链接失败" };
+      }
+      setOauthAuthorizeUrl(payload.authorizeUrl);
+      setOauthVerifier(payload.verifier ?? "");
+      window.open(payload.authorizeUrl, "_blank", "noopener,noreferrer");
+      return { ok: true, message: payload.message ?? "授权链接已生成" };
+    });
+  }
+
+  function fetchOpenAIModels(formData: FormData) {
+    runTask(async () => {
+      const result = await fetch("/api/openai/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey: accountImportText.trim(),
+          baseUrl: String(formData.get("baseUrl") || ""),
+        }),
+      });
+      const payload = (await result.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; message?: string; models?: string[] }
+        | null;
+      if (!result.ok || payload?.ok === false) {
+        return { ok: false, error: payload?.error ?? "读取模型失败" };
+      }
+      setApiModelText((payload?.models ?? []).join("\n"));
+      return { ok: true, message: payload?.message ?? "模型已读取" };
     });
   }
 
@@ -1481,105 +1587,9 @@ export default function DashboardClient({ data }: Props) {
                 </button>
               </div>
 
-              {showAccountForm ? (
-                <form action={submitManualAccount} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      ["refresh", "Refresh Token"],
-                      ["access", "Access Token"],
-                      ["apiKey", "API Key"],
-                      ["oauth", "OAuth 授权"],
-                      ["json", "JSON 导入"],
-                    ].map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setAccountImportMode(value as typeof accountImportMode)}
-                        className={clsx(
-                          "rounded-2xl border px-3 py-2 text-sm transition",
-                          accountImportMode === value
-                            ? "border-cyan-300/55 bg-cyan-300/12 text-cyan-50"
-                            : "border-white/10 bg-slate-950/30 text-slate-300 hover:border-cyan-200/25",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <textarea
-                    name="bulkText"
-                    value={accountImportText}
-                    onChange={(event) => setAccountImportText(event.target.value)}
-                    placeholder={
-                      accountImportMode === "json"
-                        ? "粘贴 GPT JSON / Sub2Api JSON / Cliproxy JSON"
-                        : accountImportMode === "refresh"
-                          ? "每行一个 Refresh Token，支持批量粘贴"
-                          : accountImportMode === "access"
-                            ? "每行一个 Access Token"
-                            : accountImportMode === "apiKey"
-                              ? "每行一个 API Key"
-                              : "OAuth 授权结果可粘贴为 JSON 或 token"
-                    }
-                    rows={7}
-                    className={inputClass}
-                  />
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className={secondaryButton}
-                    >
-                      选择 TXT / JSON 文件
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => folderInputRef.current?.click()}
-                      className={secondaryButton}
-                    >
-                      选择文件夹
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".txt,.json,application/json,text/plain"
-                      multiple
-                      className={hiddenInputClass}
-                      onChange={(event) => void readFiles(event.target.files)}
-                    />
-                    <input
-                      ref={folderInputRef}
-                      type="file"
-                      multiple
-                      className={hiddenInputClass}
-                      {...({ webkitdirectory: "" } as Record<string, string>)}
-                      onChange={(event) => void readFiles(event.target.files)}
-                    />
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => setAccountImportMode("json")}
-                      className={secondaryButton}
-                    >
-                      当前模式：{importModeLabels[accountImportMode]}
-                    </button>
-                    <button disabled={isPending} className={primaryButton}>
-                      添加到号池
-                    </button>
-                  </div>
-                  <div className="grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">TXT 文件：每行一个 Refresh Token</div>
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">AT TXT：每行一个 Access Token</div>
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">JSON：兼容 accounts、contents、credentials</div>
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">文件夹导入：自动读取其中的 .txt / .json</div>
-                  </div>
-                </form>
-              ) : (
-                <div className="rounded-[1.4rem] border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-6 text-sm leading-7 text-slate-400">
-                  添加账号方式：登录 GPT 账号后获取 Refresh Token / Access Token / API Key，或者把 GPT JSON 内容粘贴进来批量导入。
-                </div>
-              )}
+              <div className="rounded-[1.4rem] border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-6 text-sm leading-7 text-slate-400">
+                点击“新增账号”后按类型填写。Refresh Token 支持自动续期；Access Token/API Key 属于直连凭据；JSON 可导入 sub2api、CPA、codexproxy 导出内容。
+              </div>
 
               <div className="mt-5 grid gap-4 xl:grid-cols-3">
                 <div className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/36 p-4">
@@ -1621,6 +1631,191 @@ export default function DashboardClient({ data }: Props) {
                 </div>
               </div>
               </section>
+            ) : null}
+
+            {showAccountForm ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
+                <form
+                  action={submitManualAccount}
+                  className="cyber-card max-h-[92vh] w-full max-w-[720px] overflow-y-auto rounded-[1.6rem] border border-cyan-200/18 bg-slate-950/95 shadow-[0_30px_120px_rgba(0,0,0,0.55)]"
+                >
+                  <div className="flex items-center justify-between border-b border-cyan-200/12 px-5 py-4">
+                    <h3 className="text-xl font-semibold tracking-[-0.04em] text-white">添加账号</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowAccountForm(false)}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-sm text-slate-300 hover:bg-white/[0.08]"
+                    >
+                      关闭
+                    </button>
+                  </div>
+
+                  <div className="space-y-4 p-5">
+                    <div className="grid gap-2 rounded-2xl border border-cyan-200/14 bg-slate-900/70 p-1 sm:grid-cols-5">
+                      {importModeTabs.map(({ value, label, icon: Icon }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setAccountImportMode(value)}
+                          className={clsx(
+                            "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition",
+                            accountImportMode === value
+                              ? "border border-cyan-200/45 bg-cyan-300/15 text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.16)]"
+                              : "text-slate-400 hover:bg-cyan-300/8 hover:text-slate-100",
+                          )}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {accountImportMode === "access" ? (
+                      <div className="rounded-2xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                        AT 模式账号无法自动刷新，过期后需要手动更新。
+                      </div>
+                    ) : null}
+
+                    {accountImportMode === "apiKey" ? (
+                      <div className="rounded-2xl border border-cyan-200/14 bg-cyan-300/8 px-4 py-3 text-sm leading-6 text-slate-300">
+                        <strong className="text-cyan-50">OpenAI Responses API</strong>
+                        <br />
+                        使用 Base URL + API Key 直连 OpenAI Responses API，仅用于 /v1/responses。
+                      </div>
+                    ) : null}
+
+                    {accountImportMode === "oauth" ? (
+                      <div className="rounded-2xl border border-cyan-200/14 bg-cyan-300/8 px-4 py-3 text-sm leading-6 text-slate-300">
+                        <strong className="text-cyan-50">第一步：生成授权链接</strong>
+                        <br />
+                        点击按钮生成专属授权链接，在浏览器中完成 OpenAI 账号登录。完成后把回调链接或 code 粘贴到下方导入。
+                      </div>
+                    ) : null}
+
+                    <ImportField label="账号名称（可选）">
+                      <input name="label" placeholder="留空则使用邮箱或导入序号作为名称" className={inputClass} />
+                    </ImportField>
+
+                    {accountImportMode === "apiKey" ? (
+                      <>
+                        <ImportField label="Base URL *">
+                          <input name="baseUrl" defaultValue="https://api.openai.com" className={inputClass} />
+                        </ImportField>
+                        <ImportField label="API Key *">
+                          <textarea
+                            name="bulkText"
+                            value={accountImportText}
+                            onChange={(event) => setAccountImportText(event.target.value)}
+                            placeholder="sk-proj-..."
+                            rows={3}
+                            className={inputClass}
+                          />
+                        </ImportField>
+                        <ImportField label="模型列表 *">
+                          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                            <textarea
+                              value={apiModelText}
+                              onChange={(event) => setApiModelText(event.target.value)}
+                              placeholder="输入模型，例如 gpt-4.1，支持换行或逗号分隔"
+                              rows={3}
+                              className={inputClass}
+                            />
+                            <button type="submit" formAction={fetchOpenAIModels} className={secondaryButton}>
+                              请求 /v1/models
+                            </button>
+                          </div>
+                        </ImportField>
+                      </>
+                    ) : accountImportMode === "oauth" ? (
+                      <>
+                        <ImportField label="授权结果 / code *">
+                          <textarea
+                            name="bulkText"
+                            value={accountImportText}
+                            onChange={(event) => setAccountImportText(event.target.value)}
+                            placeholder="粘贴 OpenAI 回调链接、code、或 OAuth JSON"
+                            rows={5}
+                            className={inputClass}
+                          />
+                        </ImportField>
+                        {oauthAuthorizeUrl ? (
+                          <div className="rounded-2xl border border-cyan-200/14 bg-slate-950/50 p-3 text-xs text-cyan-100 break-all">
+                            {oauthAuthorizeUrl}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <ImportField
+                        label={
+                          accountImportMode === "json"
+                            ? "JSON 内容 *"
+                            : accountImportMode === "refresh"
+                              ? "Refresh Token *"
+                              : "Access Token *"
+                        }
+                      >
+                        <textarea
+                          name="bulkText"
+                          value={accountImportText}
+                          onChange={(event) => setAccountImportText(event.target.value)}
+                          placeholder={
+                            accountImportMode === "json"
+                              ? "粘贴 sub2api / CPA / codexproxy JSON"
+                              : accountImportMode === "refresh"
+                                ? "每行一个 Refresh Token，支持批量粘贴"
+                                : "每行一个 Access Token，支持批量粘贴"
+                          }
+                          rows={7}
+                          className={inputClass}
+                        />
+                      </ImportField>
+                    )}
+
+                    <ImportField label="代理地址（可选）">
+                      <input name="proxyUrl" placeholder="例如 http://127.0.0.1:7890" className={inputClass} />
+                    </ImportField>
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <button type="button" onClick={() => fileInputRef.current?.click()} className={secondaryButton}>
+                        选择 TXT / JSON 文件
+                      </button>
+                      <button type="button" onClick={() => folderInputRef.current?.click()} className={secondaryButton}>
+                        选择文件夹
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".txt,.json,application/json,text/plain"
+                        multiple
+                        className={hiddenInputClass}
+                        onChange={(event) => void readFiles(event.target.files)}
+                      />
+                      <input
+                        ref={folderInputRef}
+                        type="file"
+                        multiple
+                        className={hiddenInputClass}
+                        {...({ webkitdirectory: "" } as Record<string, string>)}
+                        onChange={(event) => void readFiles(event.target.files)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 border-t border-cyan-200/12 px-5 py-4">
+                    <button type="button" onClick={() => setShowAccountForm(false)} className={secondaryButton}>
+                      取消
+                    </button>
+                    {accountImportMode === "oauth" ? (
+                      <button type="submit" formAction={generateOAuthLink} className={secondaryButton}>
+                        生成授权链接
+                      </button>
+                    ) : null}
+                    <button disabled={isPending} className={primaryButton}>
+                      添加
+                    </button>
+                  </div>
+                </form>
+              </div>
             ) : null}
 
             {activeView === "inventory" ? (
@@ -1690,6 +1885,9 @@ export default function DashboardClient({ data }: Props) {
                 </button>
                 <button type="button" onClick={() => void exportAccounts("cpa")} className={secondaryButton}>
                   导出 CPA
+                </button>
+                <button type="button" onClick={() => void exportAccounts("txt")} className={secondaryButton}>
+                  导出 TXT
                 </button>
               </div>
 
