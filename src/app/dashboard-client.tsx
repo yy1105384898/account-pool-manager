@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useRef, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import {
@@ -22,8 +22,12 @@ import {
 import type {
   AccountStatus,
   AccountViewModel,
+  AutoReplenishRuleRecord,
+  AutoReplenishRunRecord,
   DashboardData,
   IntegrationType,
+  IntegrationViewModel,
+  RemoteStatusSummary,
 } from "@/lib/types";
 
 const statusTone: Record<AccountStatus, string> = {
@@ -61,6 +65,68 @@ const importModeLabels: Record<"refresh" | "access" | "apiKey" | "oauth" | "json
   oauth: "OAuth 授权",
   json: "JSON 导入",
 };
+
+const autoRunStatusTone: Record<NonNullable<AutoReplenishRuleRecord["lastStatus"]>, string> = {
+  success: "border-emerald-300/25 bg-emerald-400/12 text-emerald-100",
+  error: "border-rose-300/25 bg-rose-400/12 text-rose-100",
+  skipped: "border-cyan-200/18 bg-cyan-300/10 text-cyan-100",
+};
+
+const credentialFilterLabels: Record<AutoReplenishRuleRecord["credentialFilter"], string> = {
+  all: "全部账号",
+  has_refresh_token: "仅 Refresh Token",
+  access_only: "仅 Access Token",
+};
+
+type WorkspaceView = "overview" | "connections" | "add-account" | "inventory" | "activity";
+
+const workspaceNavItems: Array<{
+  view: WorkspaceView;
+  label: string;
+  icon: LucideIcon;
+  meta: string;
+}> = [
+  { view: "overview", label: "概览", icon: Sparkles, meta: "总览" },
+  { view: "connections", label: "中转管理", icon: PlugZap, meta: "推送/监控" },
+  { view: "add-account", label: "提取推送", icon: CloudUpload, meta: "导入" },
+  { view: "inventory", label: "库存", icon: Database, meta: "筛选/选择" },
+  { view: "activity", label: "最近动作", icon: Activity, meta: "日志" },
+];
+
+const workspaceViewMeta: Record<
+  WorkspaceView,
+  { eyebrow: string; title: string; description: string }
+> = {
+  overview: {
+    eyebrow: "Workspace",
+    title: "号池管理系统",
+    description: "查看本地号池、中转连接、风险账号和自动补池运行状态。",
+  },
+  connections: {
+    eyebrow: "Relay Target",
+    title: "中转站管理",
+    description: "配置 codexproxy / sub2api / CPA，检测远端账号状态并执行补池规则。",
+  },
+  "add-account": {
+    eyebrow: "Add Account",
+    title: "添加账号",
+    description: "批量导入 Refresh Token、Access Token、API Key 或 JSON。",
+  },
+  inventory: {
+    eyebrow: "Pool",
+    title: "账号库存",
+    description: "筛选、选择、停用和删除本地号池账号，再推送到中转站。",
+  },
+  activity: {
+    eyebrow: "Activity",
+    title: "最近动作",
+    description: "查看导入、推送、检测、自动补池的执行记录。",
+  },
+};
+
+function isWorkspaceView(value: string): value is WorkspaceView {
+  return workspaceNavItems.some((item) => item.view === value);
+}
 
 const integrationFormConfig: Record<
   IntegrationType,
@@ -101,23 +167,17 @@ function formatTime(value: string | null) {
   }).format(new Date(value));
 }
 
-type RemoteStatusSummary = {
-  platform: string;
-  latencyMs: number;
-  updatedAt: string;
-  totalAccounts: number;
-  normalAccounts: number;
-  warningAccounts: number;
-  statusDistribution: Record<string, number>;
-  platformDistribution: Record<string, number>;
-  typeDistribution: Record<string, number>;
-  quotaWindows: Array<{
-    label: string;
-    usedPercent: number | null;
-    remainingPercent: number | null;
-    sampleSize: number;
-  }>;
-};
+function read5hRemaining(summary?: RemoteStatusSummary | null) {
+  return (
+    summary?.quotaWindows.find((item) => item.label.toLowerCase() === "5h")
+      ?.remainingPercent ?? null
+  );
+}
+
+function formatPercent(value: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "未返回";
+  return `${Math.round(value * 10) / 10}%`;
+}
 
 type Props = {
   data: DashboardData;
@@ -184,6 +244,227 @@ function MiniStatus({ label, value }: { label: string; value: string | number })
   );
 }
 
+function AutoReplenishPanel({
+  integration,
+  autoRule,
+  autoRuns,
+  remoteStatus,
+  isPending,
+  onSave,
+  onRun,
+}: {
+  integration: IntegrationViewModel;
+  autoRule: AutoReplenishRuleRecord;
+  autoRuns: AutoReplenishRunRecord[];
+  remoteStatus?: RemoteStatusSummary | null;
+  isPending: boolean;
+  onSave: (formData: FormData) => void;
+  onRun: () => void;
+}) {
+  const recentRuns = autoRuns.slice(0, 3);
+
+  return (
+    <div className="mt-4 rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/38 p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-cyan-200/60">
+            Auto Replenish
+          </p>
+          <h4 className="mt-2 text-base font-medium text-white">
+            自动补池
+          </h4>
+          <p className="mt-1 text-xs leading-6 text-slate-400">
+            监控 {integration.name} 远端状态，低于阈值时从本地号池自动补推。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onRun} disabled={isPending} className={secondaryButton}>
+            <RefreshCw className="h-4 w-4" />
+            立即执行
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <MiniStatus
+          label="normal"
+          value={
+            remoteStatus
+              ? `${remoteStatus.normalAccounts}/${remoteStatus.totalAccounts}`
+              : "未检测"
+          }
+        />
+        <MiniStatus
+          label="5h remain"
+          value={remoteStatus ? formatPercent(read5hRemaining(remoteStatus)) : "未检测"}
+        />
+        <MiniStatus
+          label="last check"
+          value={remoteStatus ? formatTime(remoteStatus.updatedAt) : "未检测"}
+        />
+        <MiniStatus
+          label="next run"
+          value={autoRule.nextRunAt ? formatTime(autoRule.nextRunAt) : "未安排"}
+        />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-slate-400">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={clsx(
+              "rounded-full border px-2.5 py-1",
+              autoRule.lastStatus
+                ? autoRunStatusTone[autoRule.lastStatus]
+                : "border-white/10 bg-white/[0.04] text-slate-300",
+            )}
+          >
+            {autoRule.lastStatus ?? "idle"}
+          </span>
+          <span>触发: {autoRule.triggerMode === "all" ? "全部满足" : "任一触发"}</span>
+          <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
+          <span>目标 {autoRule.targetUsableAccounts}</span>
+          <span>单次上限 {autoRule.maxAccountsPerRun}</span>
+        </div>
+        <p className="mt-3 leading-6 text-slate-300">
+          {autoRule.lastMessage ?? "还没有自动补池记录。"}
+        </p>
+      </div>
+
+      <form action={onSave} className="mt-4 grid gap-3">
+        <div className="grid gap-3 lg:grid-cols-4">
+          <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              name="enabled"
+              defaultChecked={autoRule.enabled}
+              className="h-4 w-4 accent-cyan-300"
+            />
+            启用自动补池
+          </label>
+          <select name="triggerMode" defaultValue={autoRule.triggerMode} className={inputClass}>
+            <option value="any">任一触发</option>
+            <option value="all">全部满足</option>
+          </select>
+          <select
+            name="credentialFilter"
+            defaultValue={autoRule.credentialFilter}
+            className={inputClass}
+          >
+            <option value="all">全部账号</option>
+            <option value="has_refresh_token">仅 Refresh Token</option>
+            <option value="access_only">仅 Access Token</option>
+          </select>
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            name="intervalMinutes"
+            defaultValue={autoRule.intervalMinutes}
+            placeholder="检查间隔(分钟)"
+            className={inputClass}
+          />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-4">
+          <input
+            type="number"
+            min={0}
+            name="minUsableAccounts"
+            defaultValue={autoRule.minUsableAccounts}
+            placeholder="最少正常账号"
+            className={inputClass}
+          />
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step="0.1"
+            name="min5hRemainingPercent"
+            defaultValue={autoRule.min5hRemainingPercent}
+            placeholder="5h 最低剩余额度%"
+            className={inputClass}
+          />
+          <input
+            type="number"
+            min={0}
+            name="targetUsableAccounts"
+            defaultValue={autoRule.targetUsableAccounts}
+            placeholder="目标正常账号"
+            className={inputClass}
+          />
+          <input
+            type="number"
+            min={0}
+            name="quotaLowPurchaseCount"
+            defaultValue={autoRule.quotaLowPurchaseCount}
+            placeholder="额度不足补号数"
+            className={inputClass}
+          />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-4">
+          <input
+            type="number"
+            min={1}
+            name="maxAccountsPerRun"
+            defaultValue={autoRule.maxAccountsPerRun}
+            placeholder="单次最多补号"
+            className={inputClass}
+          />
+          <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              name="respectRateLimitRecovery"
+              defaultChecked={autoRule.respectRateLimitRecovery}
+              className="h-4 w-4 accent-cyan-300"
+            />
+            额度低时恢复等待
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            name="rateLimitRecoveryGraceMinutes"
+            defaultValue={autoRule.rateLimitRecoveryGraceMinutes}
+            placeholder="恢复等待(分钟)"
+            className={inputClass}
+          />
+          <button disabled={isPending} className={primaryButton}>
+            保存自动补池规则
+          </button>
+        </div>
+      </form>
+
+      <div className="mt-4 grid gap-3">
+        {recentRuns.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-4 text-sm text-slate-400">
+            暂无自动补池执行记录。
+          </div>
+        ) : (
+          recentRuns.map((run) => (
+            <div
+              key={run.id}
+              className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <span
+                  className={clsx(
+                    "rounded-full border px-2.5 py-1",
+                    autoRunStatusTone[run.status],
+                  )}
+                >
+                  {run.status}
+                </span>
+                <span>{run.triggerSource === "manual" ? "手动" : "定时"}</span>
+                <span>{formatTime(run.createdAt)}</span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-300">{run.message}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardClient({ data }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -192,16 +473,34 @@ export default function DashboardClient({ data }: Props) {
   const [statusFilter, setStatusFilter] = useState<"all" | AccountStatus>("all");
   const [sourceFilter, setSourceFilter] = useState<"all" | AccountViewModel["sourceType"]>("all");
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [showIntegrationForm, setShowIntegrationForm] = useState(true);
-  const [showAccountForm, setShowAccountForm] = useState(false);
+  const [showIntegrationForm, setShowIntegrationForm] = useState(data.integrations.length === 0);
+  const [showAccountForm, setShowAccountForm] = useState(true);
   const [selectedPlatform, setSelectedPlatform] = useState<IntegrationType>("sub2api");
   const [accountImportMode, setAccountImportMode] = useState<"refresh" | "access" | "apiKey" | "oauth" | "json">("refresh");
   const [accountImportText, setAccountImportText] = useState("");
-  const [remoteStatusByIntegration, setRemoteStatusByIntegration] = useState<Record<string, RemoteStatusSummary>>({});
+  const [remoteStatusOverrides, setRemoteStatusOverrides] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const selectedIntegrationConfig = integrationFormConfig[selectedPlatform];
+  const remoteStatusByIntegration = {
+    ...Object.fromEntries(
+      data.integrations.flatMap((item) =>
+        item.lastStatusSummary ? [[item.id, item.lastStatusSummary]] : [],
+      ),
+    ),
+    ...remoteStatusOverrides,
+  };
+  const autoRuleByIntegration = new Map(
+    data.autoRules.map((item) => [item.integrationId, item] as const),
+  );
+  const autoRunsByIntegration = data.autoRuns.reduce<Record<string, AutoReplenishRunRecord[]>>(
+    (acc, item) => {
+      acc[item.integrationId] = [...(acc[item.integrationId] ?? []), item];
+      return acc;
+    },
+    {},
+  );
 
   const accounts = data.accounts.filter((item) => {
     const matchStatus = statusFilter === "all" || item.status === statusFilter;
@@ -227,6 +526,20 @@ export default function DashboardClient({ data }: Props) {
   const warningRate = data.summary.totalAccounts
     ? Math.round((data.summary.warningAccounts / data.summary.totalAccounts) * 100)
     : 0;
+  const enabledAutoRuleCount = data.autoRules.filter((item) => item.enabled).length;
+  const [activeView, setActiveView] = useState<WorkspaceView>("overview");
+  const activeViewMeta = workspaceViewMeta[activeView];
+
+  useEffect(() => {
+    function syncFromHash() {
+      const hashView = window.location.hash.replace("#", "");
+      if (isWorkspaceView(hashView)) setActiveView(hashView);
+    }
+
+    syncFromHash();
+    window.addEventListener("hashchange", syncFromHash);
+    return () => window.removeEventListener("hashchange", syncFromHash);
+  }, []);
 
   function toggleSelection(accountId: string) {
     setSelectedIds((current) =>
@@ -238,6 +551,15 @@ export default function DashboardClient({ data }: Props) {
 
   function selectAllVisible() {
     setSelectedIds(accounts.map((item) => item.id));
+  }
+
+  function changeWorkspaceView(view: WorkspaceView) {
+    setActiveView(view);
+    if (typeof window === "undefined") return;
+
+    const hash = `#${view}`;
+    if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function runTask(task: () => Promise<{ ok: boolean; error?: string; message?: string }>) {
@@ -293,12 +615,46 @@ export default function DashboardClient({ data }: Props) {
       if (!response.ok || payload?.ok === false || !payload?.summary) {
         return { ok: false, error: payload?.error ?? "读取远端状态失败" };
       }
-      setRemoteStatusByIntegration((current) => ({
+      setRemoteStatusOverrides((current) => ({
         ...current,
         [integrationId]: payload.summary as RemoteStatusSummary,
       }));
       return { ok: true, message: `已读取远端账号 ${payload.summary.totalAccounts} 个` };
     });
+  }
+
+  function saveAutoReplenishRule(integrationId: string, formData: FormData) {
+    const payload = {
+      enabled: formData.get("enabled") === "on",
+      triggerMode: String(formData.get("triggerMode") || "any"),
+      credentialFilter: String(formData.get("credentialFilter") || "all"),
+      intervalMinutes: Number(formData.get("intervalMinutes") || 5),
+      minUsableAccounts: Number(formData.get("minUsableAccounts") || 0),
+      min5hRemainingPercent: Number(formData.get("min5hRemainingPercent") || 0),
+      targetUsableAccounts: Number(formData.get("targetUsableAccounts") || 0),
+      quotaLowPurchaseCount: Number(formData.get("quotaLowPurchaseCount") || 0),
+      maxAccountsPerRun: Number(formData.get("maxAccountsPerRun") || 1),
+      respectRateLimitRecovery: formData.get("respectRateLimitRecovery") === "on",
+      rateLimitRecoveryGraceMinutes: Number(
+        formData.get("rateLimitRecoveryGraceMinutes") || 0,
+      ),
+    };
+
+    runTask(() =>
+      callApi(`/api/integrations/${integrationId}/auto-replenish`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+  }
+
+  function runAutoReplenish(integrationId: string) {
+    runTask(() =>
+      callApi(`/api/integrations/${integrationId}/auto-replenish/run`, {
+        method: "POST",
+      }),
+    );
   }
 
   async function readFiles(files: FileList | null) {
@@ -352,25 +708,59 @@ export default function DashboardClient({ data }: Props) {
 
   return (
     <div className="cyber-shell min-h-screen text-slate-100">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1680px] flex-col gap-7 px-4 py-5 sm:px-6 lg:px-10 lg:py-8">
-        <nav className="command-bar sticky top-4 z-30 flex flex-col gap-3 rounded-[1.6rem] px-4 py-3 text-sm text-slate-200 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
+      <div className="grid min-h-screen w-full lg:grid-cols-[260px_minmax(0,1fr)]">
+        <nav className="command-bar z-30 flex flex-col gap-5 rounded-none border-x-0 border-t-0 px-4 py-5 text-sm text-slate-200 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r lg:border-cyan-200/14">
+          <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/15 text-cyan-100 shadow-[0_0_28px_rgba(34,211,238,0.20)]">
               <Cpu className="h-5 w-5" />
             </div>
             <div>
               <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-cyan-100/70">
-                Command Center
+                NexusPool
               </p>
-              <p className="text-sm font-medium text-white">号池控制台 · Docker / Cloud Ready</p>
+              <p className="text-sm font-medium text-white">号池管理系统</p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs">
+
+          <div className="grid gap-2">
+            {workspaceNavItems.map(({ view, label, icon: Icon, meta }) => {
+              const active = activeView === view;
+              return (
+                <button
+                  key={view}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => changeWorkspaceView(view)}
+                  className={clsx(
+                    "group flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition",
+                    active
+                      ? "border-cyan-200/35 bg-cyan-300/14 text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.13)]"
+                      : "border-transparent text-slate-300 hover:border-cyan-200/18 hover:bg-cyan-300/10 hover:text-cyan-50",
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <Icon
+                      className={clsx(
+                        "h-4 w-4 transition",
+                        active ? "text-cyan-100" : "text-cyan-200/70 group-hover:text-cyan-100",
+                      )}
+                    />
+                    <span>{label}</span>
+                  </span>
+                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    {meta}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-auto grid gap-2 text-xs">
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-cyan-100">
-              <Network className="h-3.5 w-3.5" /> 端口 3015
+              <Network className="h-3.5 w-3.5" /> {data.summary.totalAccounts} 个账号
             </span>
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-blue-100">
-              <PlugZap className="h-3.5 w-3.5" /> sub2api · CPA · codexproxy
+              <PlugZap className="h-3.5 w-3.5" /> {data.summary.integrationCount} 个中转站
             </span>
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-amber-100">
               <Activity className="h-3.5 w-3.5" /> 风险 {warningRate}%
@@ -378,84 +768,166 @@ export default function DashboardClient({ data }: Props) {
           </div>
         </nav>
 
-        <header className="cyber-card matrix-glow relative rounded-[2.4rem] p-5 sm:p-7 lg:p-9">
-          <div className="hero-orb" />
-          <div className="absolute bottom-0 left-8 right-8 h-px bg-gradient-to-r from-transparent via-cyan-200/70 to-transparent" />
-          <div className="grid gap-8 xl:grid-cols-[minmax(0,1.08fr)_minmax(500px,0.92fr)] xl:items-stretch">
-            <div className="flex min-h-[320px] flex-col justify-between gap-8">
-              <div className="space-y-6">
-                <div className="inline-flex items-center gap-3 rounded-full border border-cyan-200/28 bg-cyan-300/14 px-4 py-2.5 text-xs text-cyan-100 shadow-[0_0_45px_rgba(34,211,238,0.18)]">
-                  <Sparkles className="h-4 w-4 text-cyan-200" />
-                  <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.9)]" />
-                  <span className="font-mono uppercase tracking-[0.24em]">Account Pool Control</span>
+        <div className="min-w-0 px-4 py-5 sm:px-6 lg:px-7 lg:py-7">
+          <header className="mx-auto flex max-w-[1280px] flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className={sectionTitleClass}>{activeViewMeta.eyebrow}</p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.055em] text-white">
+                {activeViewMeta.title}
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+                {activeViewMeta.description}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-cyan-100">
+                <PlugZap className="h-3.5 w-3.5" /> {data.summary.integrationCount} 个中转
+              </span>
+              <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-emerald-100">
+                <ShieldCheck className="h-3.5 w-3.5" /> {data.summary.activeAccounts} 个可用
+              </span>
+              <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-amber-100">
+                <Activity className="h-3.5 w-3.5" /> 风险 {warningRate}%
+              </span>
+            </div>
+          </header>
+
+          {notice ? (
+            <div
+              className={clsx(
+                "mx-auto mt-5 max-w-[1280px] rounded-[1.3rem] border px-4 py-3 text-sm shadow-[0_18px_60px_rgba(0,0,0,0.25)] backdrop-blur",
+                notice.type === "success"
+                  ? "border-emerald-300/25 bg-emerald-400/12 text-emerald-100"
+                  : "border-rose-300/25 bg-rose-400/12 text-rose-100",
+              )}
+            >
+              {notice.text}
+            </div>
+          ) : null}
+
+          <main className="mx-auto mt-5 max-w-[1280px] space-y-5">
+            {activeView === "overview" ? (
+              <section id="overview" className="space-y-5">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MetricCard
+                    icon={Database}
+                    label="本地账号"
+                    value={data.summary.totalAccounts}
+                    extra={`${data.summary.activeAccounts} 个可用 · ${activeRate}%`}
+                    tone="bg-cyan-400/25"
+                  />
+                  <MetricCard
+                    icon={PlugZap}
+                    label="远端连接"
+                    value={data.summary.integrationCount}
+                    extra="codexproxy / sub2api / CPA"
+                    tone="bg-blue-400/25"
+                  />
+                  <MetricCard
+                    icon={AlertCircle}
+                    label="需处理"
+                    value={data.summary.warningAccounts}
+                    extra={`风险占比 ${warningRate}%`}
+                    tone="bg-amber-400/25"
+                  />
+                  <MetricCard
+                    icon={ShieldCheck}
+                    label="自动补池"
+                    value={enabledAutoRuleCount}
+                    extra={`规则总数 ${data.autoRules.length}`}
+                    tone="bg-teal-400/25"
+                  />
                 </div>
 
-                <div className="space-y-4">
-                  <h1 className="laser-text max-w-4xl text-5xl font-semibold tracking-[-0.085em] sm:text-6xl lg:text-7xl">
-                    号池管理系统
-                  </h1>
-                  <p className="max-w-3xl text-base leading-8 text-slate-200 sm:text-lg">
-                    以本地号池为核心，统一接入 <code className="font-mono text-cyan-100">sub2api</code>、<code className="font-mono text-cyan-100">CPA</code> 与 <code className="font-mono text-cyan-100">codexproxy</code> 中转站，只在号池内维护账号，再向中转站推送，并实时读取中转站账号状态与额度窗口。
-                  </p>
+                <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
+                  <section className={panelClass}>
+                    <div className="mb-4 flex items-center justify-between gap-4">
+                      <div>
+                        <p className={sectionTitleClass}>Relay Snapshot</p>
+                        <h2 className="mt-2 text-xl font-semibold text-white">中转状态快览</h2>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => changeWorkspaceView("connections")}
+                        className={secondaryButton}
+                      >
+                        管理中转
+                      </button>
+                    </div>
+                    <div className="grid gap-3">
+                      {data.integrations.length === 0 ? (
+                        <div className="rounded-[1.4rem] border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-6 text-sm text-slate-400">
+                          还没有配置中转站。
+                        </div>
+                      ) : null}
+                      {data.integrations.slice(0, 4).map((integration) => {
+                        const remoteStatus = remoteStatusByIntegration[integration.id];
+                        return (
+                          <div
+                            key={integration.id}
+                            className="rounded-2xl border border-cyan-200/12 bg-slate-950/34 px-4 py-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-medium text-white">{integration.name}</p>
+                                <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.2em] text-cyan-200/55">
+                                  {integration.type}
+                                </p>
+                              </div>
+                              <span className="rounded-full border border-cyan-200/15 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-100">
+                                {remoteStatus
+                                  ? `${remoteStatus.normalAccounts}/${remoteStatus.totalAccounts} 正常`
+                                  : "未检测"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section className={panelClass}>
+                    <p className={sectionTitleClass}>Shortcuts</p>
+                    <h2 className="mt-2 text-xl font-semibold text-white">常用操作</h2>
+                    <div className="mt-4 grid gap-3">
+                      <button
+                        type="button"
+                        onClick={() => changeWorkspaceView("add-account")}
+                        className={primaryButton}
+                      >
+                        <CloudUpload className="h-4 w-4" />
+                        导入账号
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => changeWorkspaceView("inventory")}
+                        className={secondaryButton}
+                      >
+                        <Database className="h-4 w-4" />
+                        选择库存推送
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => changeWorkspaceView("activity")}
+                        className={secondaryButton}
+                      >
+                        <Activity className="h-4 w-4" />
+                        查看运行记录
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <MiniStatus label="visible" value={accounts.length} />
+                      <MiniStatus label="selected" value={selectedIds.length} />
+                      <MiniStatus label="auto rules" value={enabledAutoRuleCount} />
+                      <MiniStatus label="active rate" value={`${activeRate}%`} />
+                    </div>
+                  </section>
                 </div>
-              </div>
+              </section>
+            ) : null}
 
-              <div className="grid gap-4 sm:grid-cols-3">
-                <MiniStatus label="server port" value="3015" />
-                <MiniStatus label="data volume" value="/app/data" />
-                <MiniStatus label="proxy ready" value="Lucky" />
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <MetricCard
-                icon={Database}
-                label="本地账号"
-                value={data.summary.totalAccounts}
-                extra={`${data.summary.activeAccounts} 个可用 · ${activeRate}%`}
-                tone="bg-cyan-400/25"
-              />
-              <MetricCard
-                icon={PlugZap}
-                label="远端连接"
-                value={data.summary.integrationCount}
-                extra="codexproxy(codex2api) / sub2api / CPA"
-                tone="bg-blue-400/25"
-              />
-              <MetricCard
-                icon={AlertCircle}
-                label="需处理"
-                value={data.summary.warningAccounts}
-                extra={`风险占比 ${warningRate}%`}
-                tone="bg-amber-400/25"
-              />
-              <MetricCard
-                icon={ShieldCheck}
-                label="部署形态"
-                value="Docker"
-                extra="云端稳定运行"
-                tone="bg-teal-400/25"
-              />
-            </div>
-          </div>
-        </header>
-
-        {notice ? (
-          <div
-            className={clsx(
-              "rounded-[1.3rem] border px-4 py-3 text-sm shadow-[0_18px_60px_rgba(0,0,0,0.25)] backdrop-blur",
-              notice.type === "success"
-                ? "border-emerald-300/25 bg-emerald-400/12 text-emerald-100"
-                : "border-rose-300/25 bg-rose-400/12 text-rose-100",
-            )}
-          >
-            {notice.text}
-          </div>
-        ) : null}
-
-        <div className="grid gap-6 2xl:grid-cols-[430px_minmax(0,1fr)]">
-          <aside className="space-y-6 2xl:sticky 2xl:top-28 2xl:self-start">
-            <section className={panelClass}>
+            {activeView === "connections" ? (
+              <section id="connections" className={panelClass}>
               <div className="mb-5 flex items-start justify-between gap-4">
                 <div>
                   <p className={sectionTitleClass}>Relay Target</p>
@@ -527,6 +999,8 @@ export default function DashboardClient({ data }: Props) {
 
                 {data.integrations.map((integration) => {
                   const remoteStatus = remoteStatusByIntegration[integration.id];
+                  const autoRule = autoRuleByIntegration.get(integration.id);
+                  const autoRuns = autoRunsByIntegration[integration.id] ?? [];
                   const normalPercent = remoteStatus?.totalAccounts
                     ? Math.round((remoteStatus.normalAccounts / remoteStatus.totalAccounts) * 100)
                     : 0;
@@ -677,13 +1151,26 @@ export default function DashboardClient({ data }: Props) {
                         推送已选 {selectedIds.length} 个账号
                       </button>
                     ) : null}
+                    {autoRule ? (
+                      <AutoReplenishPanel
+                        integration={integration}
+                        autoRule={autoRule}
+                        autoRuns={autoRuns}
+                        remoteStatus={remoteStatus}
+                        isPending={isPending}
+                        onSave={(formData) => saveAutoReplenishRule(integration.id, formData)}
+                        onRun={() => runAutoReplenish(integration.id)}
+                      />
+                    ) : null}
                   </article>
                   );
                 })}
               </div>
-            </section>
+              </section>
+            ) : null}
 
-            <section className={panelClass}>
+            {activeView === "add-account" ? (
+              <section id="add-account" className={panelClass}>
               <div className="mb-5 flex items-start justify-between gap-4">
                 <div>
                   <p className={sectionTitleClass}>Add Account</p>
@@ -801,11 +1288,11 @@ export default function DashboardClient({ data }: Props) {
                   添加账号方式：登录 GPT 账号后获取 Refresh Token / Access Token / API Key，或者把 GPT JSON 内容粘贴进来批量导入。
                 </div>
               )}
-            </section>
-          </aside>
+              </section>
+            ) : null}
 
-          <main className="space-y-6">
-            <section className={panelClass}>
+            {activeView === "inventory" ? (
+              <section id="inventory" className={panelClass}>
               <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
                 <div>
                   <p className={sectionTitleClass}>Pool</p>
@@ -1011,9 +1498,11 @@ export default function DashboardClient({ data }: Props) {
                   </table>
                 </div>
               </div>
-            </section>
+              </section>
+            ) : null}
 
-            <section className={panelClass}>
+            {activeView === "activity" ? (
+              <section id="activity" className={panelClass}>
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className={sectionTitleClass}>Activity</p>
@@ -1071,38 +1560,11 @@ export default function DashboardClient({ data }: Props) {
                   </article>
                 ))}
               </div>
-            </section>
-          </main>
-        </div>
+              </section>
+            ) : null}
+        </main>
 
-        <footer className="cyber-card matrix-glow grid gap-3 rounded-[1.8rem] p-5 text-sm text-slate-400 md:grid-cols-4">
-          <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
-            <p className="mb-2 font-mono text-xs uppercase tracking-[0.24em] text-cyan-200/62">
-              codexproxy
-            </p>
-            <p>codex2api 项目的平台类型就是 codexproxy。</p>
-            <p>状态用 <code className="font-mono text-cyan-100">/api/admin/health</code> 和 <code className="font-mono text-cyan-100">/api/admin/accounts</code>。</p>
-            <p>推送 RT/AT 分别走 <code className="font-mono text-cyan-100">/api/admin/accounts</code>、<code className="font-mono text-cyan-100">/api/admin/accounts/at</code>。</p>
-          </div>
-          <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
-            <p className="mb-2 font-mono text-xs uppercase tracking-[0.24em] text-cyan-200/62">
-              CPA
-            </p>
-            <p>按兼容接口读取状态并推送账号。</p>
-            <p>适合 CPA 管理地址与 Management Key。</p>
-          </div>
-          <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
-            <p>状态读取用 <code className="font-mono text-cyan-100">/api/v1/admin/accounts/data</code>。</p>
-            <p>推送用 <code className="font-mono text-cyan-100">/api/v1/admin/accounts/import/codex-session</code>。</p>
-          </div>
-          <div className="rounded-[1.2rem] border border-cyan-200/12 bg-slate-950/34 p-4">
-            <p className="mb-2 font-mono text-xs uppercase tracking-[0.24em] text-cyan-200/62">
-              cloud
-            </p>
-            <p>Docker 已预留数据卷和独立端口。</p>
-            <p>现有 Lucky 可直接做反代。</p>
-          </div>
-        </footer>
+      </div>
       </div>
     </div>
   );

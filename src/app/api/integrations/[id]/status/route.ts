@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { addActivityLog, getIntegrationById, updateIntegrationHealth } from "@/lib/server/db";
+import {
+  addActivityLog,
+  getIntegrationById,
+  updateIntegrationHealth,
+  updateIntegrationRemoteStatusSummary,
+} from "@/lib/server/db";
 import { readIntegrationRemoteStatus } from "@/lib/server/connectors";
 
 type RouteContext = {
@@ -16,6 +21,7 @@ export async function POST(_: Request, context: RouteContext) {
 
   try {
     const summary = await readIntegrationRemoteStatus(integration);
+    updateIntegrationRemoteStatusSummary(integration.id, summary);
     updateIntegrationHealth(integration.id, "success", `读取成功，远端账号 ${summary.totalAccounts} 个`);
     addActivityLog(
       "integration_status",

@@ -6,6 +6,7 @@ import {
   getAccountsByIds,
   getIntegrationById,
   markAccountsPushed,
+  recordAccountsPushedToIntegration,
 } from "@/lib/server/db";
 import { pushRequestSchema } from "@/lib/types";
 import { pushAccountsToIntegration } from "@/lib/server/connectors";
@@ -25,6 +26,10 @@ export async function POST(request: Request) {
 
     const result = await pushAccountsToIntegration(integration, accounts);
     markAccountsPushed(accounts.map((item) => item.id));
+    recordAccountsPushedToIntegration(
+      integration.id,
+      accounts.map((item) => item.id),
+    );
     addActivityLog(
       "account_push",
       "success",

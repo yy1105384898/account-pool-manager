@@ -1,22 +1,6 @@
 import "server-only";
 
-export type RemoteStatusSummary = {
-  platform: string;
-  latencyMs: number;
-  updatedAt: string;
-  totalAccounts: number;
-  normalAccounts: number;
-  warningAccounts: number;
-  statusDistribution: Record<string, number>;
-  platformDistribution: Record<string, number>;
-  typeDistribution: Record<string, number>;
-  quotaWindows: Array<{
-    label: string;
-    usedPercent: number | null;
-    remainingPercent: number | null;
-    sampleSize: number;
-  }>;
-};
+export type { RemoteStatusSummary } from "@/lib/types";
 
 export function createDistribution(values: Array<string | null | undefined>) {
   return values.reduce<Record<string, number>>((acc, value) => {

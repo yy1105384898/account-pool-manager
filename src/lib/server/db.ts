@@ -9,12 +9,17 @@ import type {
   AccountStatus,
   AccountViewModel,
   ActivityLogRecord,
+  AutoReplenishRuleInput,
+  AutoReplenishRuleRecord,
+  AutoReplenishRunRecord,
+  AutoReplenishRunStatus,
   DashboardData,
   DashboardSummary,
   IntegrationInput,
   IntegrationRecord,
   IntegrationViewModel,
   ManualAccountInput,
+  RemoteStatusSummary,
 } from "@/lib/types";
 
 type RemoteAccount = {
@@ -58,6 +63,8 @@ function getDb() {
       last_test_status TEXT,
       last_test_message TEXT,
       last_synced_at TEXT,
+      last_status_summary_json TEXT,
+      last_status_checked_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -100,7 +107,62 @@ function getDb() {
       metadata_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS auto_replenish_rules (
+      id TEXT PRIMARY KEY,
+      integration_id TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      trigger_mode TEXT NOT NULL,
+      min_usable_accounts INTEGER NOT NULL,
+      min_5h_remaining_percent REAL NOT NULL,
+      target_usable_accounts INTEGER NOT NULL,
+      quota_low_purchase_count INTEGER NOT NULL,
+      max_accounts_per_run INTEGER NOT NULL,
+      interval_minutes INTEGER NOT NULL,
+      credential_filter TEXT NOT NULL,
+      respect_rate_limit_recovery INTEGER NOT NULL DEFAULT 1,
+      rate_limit_recovery_grace_minutes INTEGER NOT NULL,
+      last_run_at TEXT,
+      next_run_at TEXT,
+      last_status TEXT,
+      last_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_replenish_runs (
+      id TEXT PRIMARY KEY,
+      integration_id TEXT NOT NULL,
+      trigger_source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      message TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS auto_replenish_runs_integration_created_idx
+      ON auto_replenish_runs(integration_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS account_integration_pushes (
+      integration_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      first_pushed_at TEXT NOT NULL,
+      last_pushed_at TEXT NOT NULL,
+      push_count INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (integration_id, account_id)
+    );
   `);
+
+  for (const statement of [
+    "ALTER TABLE integrations ADD COLUMN last_status_summary_json TEXT",
+    "ALTER TABLE integrations ADD COLUMN last_status_checked_at TEXT",
+  ]) {
+    try {
+      db.exec(statement);
+    } catch {
+      // Existing databases may already include these columns.
+    }
+  }
 
   database = db;
   return db;
@@ -143,6 +205,14 @@ function mapIntegrationRow(row: Record<string, unknown>): IntegrationRecord {
       typeof row.last_test_message === "string" ? row.last_test_message : null,
     lastSyncedAt:
       typeof row.last_synced_at === "string" ? row.last_synced_at : null,
+    lastStatusSummary:
+      typeof row.last_status_summary_json === "string"
+        ? (parseJson(row.last_status_summary_json) as RemoteStatusSummary)
+        : null,
+    lastStatusCheckedAt:
+      typeof row.last_status_checked_at === "string"
+        ? row.last_status_checked_at
+        : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -191,6 +261,56 @@ function mapLogRow(row: Record<string, unknown>): ActivityLogRecord {
       row.status === "success" || row.status === "error" ? row.status : "info",
     title: String(row.title),
     detail: String(row.detail),
+    metadata: parseJson(row.metadata_json),
+    createdAt: String(row.created_at),
+  };
+}
+
+function mapAutoReplenishRuleRow(row: Record<string, unknown>): AutoReplenishRuleRecord {
+  return {
+    id: String(row.id),
+    integrationId: String(row.integration_id),
+    enabled: toBool(row.enabled),
+    triggerMode: row.trigger_mode as AutoReplenishRuleRecord["triggerMode"],
+    minUsableAccounts: Number(row.min_usable_accounts ?? 0),
+    min5hRemainingPercent: Number(row.min_5h_remaining_percent ?? 0),
+    targetUsableAccounts: Number(row.target_usable_accounts ?? 0),
+    quotaLowPurchaseCount: Number(row.quota_low_purchase_count ?? 0),
+    maxAccountsPerRun: Number(row.max_accounts_per_run ?? 0),
+    intervalMinutes: Number(row.interval_minutes ?? 0),
+    credentialFilter:
+      row.credential_filter as AutoReplenishRuleRecord["credentialFilter"],
+    respectRateLimitRecovery: toBool(row.respect_rate_limit_recovery),
+    rateLimitRecoveryGraceMinutes: Number(
+      row.rate_limit_recovery_grace_minutes ?? 0,
+    ),
+    lastRunAt: typeof row.last_run_at === "string" ? row.last_run_at : null,
+    nextRunAt: typeof row.next_run_at === "string" ? row.next_run_at : null,
+    lastStatus:
+      row.last_status === "success" ||
+      row.last_status === "error" ||
+      row.last_status === "skipped"
+        ? row.last_status
+        : null,
+    lastMessage: typeof row.last_message === "string" ? row.last_message : null,
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+  };
+}
+
+function mapAutoReplenishRunRow(row: Record<string, unknown>): AutoReplenishRunRecord {
+  return {
+    id: String(row.id),
+    integrationId: String(row.integration_id),
+    triggerSource:
+      row.trigger_source === "manual" ? "manual" : "scheduled",
+    status:
+      row.status === "success" ||
+      row.status === "error" ||
+      row.status === "skipped"
+        ? row.status
+        : "skipped",
+    message: String(row.message),
     metadata: parseJson(row.metadata_json),
     createdAt: String(row.created_at),
   };
@@ -269,6 +389,32 @@ function normalizeNullable(value?: string | null) {
   return trimmed ? trimmed : null;
 }
 
+export function createDefaultAutoReplenishRule(
+  integrationId: string,
+): AutoReplenishRuleRecord {
+  return {
+    id: null,
+    integrationId,
+    enabled: false,
+    triggerMode: "any",
+    minUsableAccounts: 3,
+    min5hRemainingPercent: 20,
+    targetUsableAccounts: 5,
+    quotaLowPurchaseCount: 1,
+    maxAccountsPerRun: 3,
+    intervalMinutes: 5,
+    credentialFilter: "all",
+    respectRateLimitRecovery: true,
+    rateLimitRecoveryGraceMinutes: 30,
+    lastRunAt: null,
+    nextRunAt: null,
+    lastStatus: null,
+    lastMessage: null,
+    createdAt: null,
+    updatedAt: null,
+  };
+}
+
 export function listIntegrations() {
   const db = getDb();
   const rows = db
@@ -293,6 +439,30 @@ export function listActivityLogs(limit = 12) {
   return rows.map(mapLogRow);
 }
 
+export function listAutoReplenishRules() {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT * FROM auto_replenish_rules ORDER BY updated_at DESC")
+    .all() as Record<string, unknown>[];
+  return rows.map(mapAutoReplenishRuleRow);
+}
+
+export function listAutoReplenishRuns(limit = 60) {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT * FROM auto_replenish_runs ORDER BY created_at DESC LIMIT ?")
+    .all(limit) as Record<string, unknown>[];
+  return rows.map(mapAutoReplenishRunRow);
+}
+
+export function getAutoReplenishRuleByIntegrationId(integrationId: string) {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM auto_replenish_rules WHERE integration_id = ?")
+    .get(integrationId) as Record<string, unknown> | undefined;
+  return row ? mapAutoReplenishRuleRow(row) : createDefaultAutoReplenishRule(integrationId);
+}
+
 export function getIntegrationById(id: string) {
   const db = getDb();
   const row = db
@@ -309,6 +479,17 @@ export function getAccountsByIds(ids: string[]) {
     .prepare(`SELECT * FROM accounts WHERE id IN (${placeholders})`)
     .all(...ids) as Record<string, unknown>[];
   return rows.map(mapAccountRow);
+}
+
+export function listPushedAccountStatesByIntegration(integrationId: string) {
+  const db = getDb();
+  return db
+    .prepare(`
+      SELECT integration_id, account_id, first_pushed_at, last_pushed_at, push_count
+      FROM account_integration_pushes
+      WHERE integration_id = ?
+    `)
+    .all(integrationId) as Array<Record<string, unknown>>;
 }
 
 export function createIntegration(input: IntegrationInput) {
@@ -338,6 +519,9 @@ export function createIntegration(input: IntegrationInput) {
 
 export function deleteIntegration(id: string) {
   const db = getDb();
+  db.prepare("DELETE FROM auto_replenish_rules WHERE integration_id = ?").run(id);
+  db.prepare("DELETE FROM auto_replenish_runs WHERE integration_id = ?").run(id);
+  db.prepare("DELETE FROM account_integration_pushes WHERE integration_id = ?").run(id);
   db.prepare("DELETE FROM integrations WHERE id = ?").run(id);
 }
 
@@ -592,6 +776,65 @@ export function upsertImportedAccounts(
   return { created, updated, skipped, imported: created + updated };
 }
 
+export function upsertAutoReplenishRule(
+  integrationId: string,
+  input: AutoReplenishRuleInput,
+) {
+  const db = getDb();
+  const existing = db
+    .prepare("SELECT id, created_at FROM auto_replenish_rules WHERE integration_id = ?")
+    .get(integrationId) as
+    | { id?: string; created_at?: string }
+    | undefined;
+  const timestamp = nowIso();
+  const id = typeof existing?.id === "string" ? existing.id : randomUUID();
+
+  db.prepare(`
+    INSERT INTO auto_replenish_rules (
+      id, integration_id, enabled, trigger_mode, min_usable_accounts,
+      min_5h_remaining_percent, target_usable_accounts, quota_low_purchase_count,
+      max_accounts_per_run, interval_minutes, credential_filter,
+      respect_rate_limit_recovery, rate_limit_recovery_grace_minutes,
+      last_run_at, next_run_at, last_status, last_message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
+    ON CONFLICT(integration_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      trigger_mode = excluded.trigger_mode,
+      min_usable_accounts = excluded.min_usable_accounts,
+      min_5h_remaining_percent = excluded.min_5h_remaining_percent,
+      target_usable_accounts = excluded.target_usable_accounts,
+      quota_low_purchase_count = excluded.quota_low_purchase_count,
+      max_accounts_per_run = excluded.max_accounts_per_run,
+      interval_minutes = excluded.interval_minutes,
+      credential_filter = excluded.credential_filter,
+      respect_rate_limit_recovery = excluded.respect_rate_limit_recovery,
+      rate_limit_recovery_grace_minutes = excluded.rate_limit_recovery_grace_minutes,
+      next_run_at = excluded.next_run_at,
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    integrationId,
+    input.enabled ? 1 : 0,
+    input.triggerMode,
+    input.minUsableAccounts,
+    input.min5hRemainingPercent,
+    input.targetUsableAccounts,
+    input.quotaLowPurchaseCount,
+    input.maxAccountsPerRun,
+    input.intervalMinutes,
+    input.credentialFilter,
+    input.respectRateLimitRecovery ? 1 : 0,
+    input.rateLimitRecoveryGraceMinutes,
+    input.enabled
+      ? new Date(Date.now() + input.intervalMinutes * 60_000).toISOString()
+      : null,
+    existing?.created_at ?? timestamp,
+    timestamp,
+  );
+
+  return getAutoReplenishRuleByIntegrationId(integrationId);
+}
+
 export function markAccountsPushed(accountIds: string[]) {
   if (accountIds.length === 0) return;
   const db = getDb();
@@ -602,6 +845,74 @@ export function markAccountsPushed(accountIds: string[]) {
     SET last_pushed_at = ?, updated_at = ?
     WHERE id IN (${placeholders})
   `).run(timestamp, timestamp, ...accountIds);
+}
+
+export function recordAccountsPushedToIntegration(
+  integrationId: string,
+  accountIds: string[],
+) {
+  if (accountIds.length === 0) return;
+  const db = getDb();
+  const timestamp = nowIso();
+  const insert = db.prepare(`
+    INSERT INTO account_integration_pushes (
+      integration_id, account_id, first_pushed_at, last_pushed_at, push_count
+    ) VALUES (?, ?, ?, ?, 1)
+    ON CONFLICT(integration_id, account_id) DO UPDATE SET
+      last_pushed_at = excluded.last_pushed_at,
+      push_count = account_integration_pushes.push_count + 1
+  `);
+
+  for (const accountId of accountIds) {
+    insert.run(integrationId, accountId, timestamp, timestamp);
+  }
+}
+
+export function updateAutoReplenishRuleExecution(
+  integrationId: string,
+  patch: {
+    lastRunAt: string;
+    nextRunAt: string | null;
+    lastStatus: AutoReplenishRunStatus;
+    lastMessage: string;
+  },
+) {
+  const db = getDb();
+  db.prepare(`
+    UPDATE auto_replenish_rules
+    SET last_run_at = ?, next_run_at = ?, last_status = ?, last_message = ?, updated_at = ?
+    WHERE integration_id = ?
+  `).run(
+    patch.lastRunAt,
+    patch.nextRunAt,
+    patch.lastStatus,
+    patch.lastMessage,
+    patch.lastRunAt,
+    integrationId,
+  );
+}
+
+export function addAutoReplenishRun(
+  integrationId: string,
+  triggerSource: "manual" | "scheduled",
+  status: AutoReplenishRunStatus,
+  message: string,
+  metadata?: Record<string, unknown>,
+) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO auto_replenish_runs (
+      id, integration_id, trigger_source, status, message, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    randomUUID(),
+    integrationId,
+    triggerSource,
+    status,
+    message,
+    stringifyJson(metadata),
+    nowIso(),
+  );
 }
 
 export function updateIntegrationHealth(
@@ -616,6 +927,24 @@ export function updateIntegrationHealth(
     SET last_test_status = ?, last_test_message = ?, updated_at = ?
     WHERE id = ?
   `).run(status, message, timestamp, integrationId);
+}
+
+export function updateIntegrationRemoteStatusSummary(
+  integrationId: string,
+  summary: RemoteStatusSummary,
+) {
+  const db = getDb();
+  const timestamp = summary.updatedAt || nowIso();
+  db.prepare(`
+    UPDATE integrations
+    SET last_status_summary_json = ?, last_status_checked_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    JSON.stringify(summary),
+    summary.updatedAt,
+    timestamp,
+    integrationId,
+  );
 }
 
 export function addActivityLog(
@@ -644,11 +973,22 @@ export function getDashboardData(): DashboardData {
   const integrations = listIntegrations();
   const accounts = listAccounts();
   const logs = listActivityLogs();
+  const storedRules = new Map(
+    listAutoReplenishRules().map((item) => [item.integrationId, item] as const),
+  );
+  const autoRuns = listAutoReplenishRuns();
+  const autoRules = integrations.map(
+    (integration) =>
+      storedRules.get(integration.id) ??
+      createDefaultAutoReplenishRule(integration.id),
+  );
 
   return {
     summary: buildSummary(accounts, integrations),
     accounts: accounts.map(toAccountView),
     integrations: integrations.map(toIntegrationView),
     logs,
+    autoRules,
+    autoRuns,
   };
 }
