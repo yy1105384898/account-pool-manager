@@ -109,6 +109,7 @@ const iconActionButton =
   "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-200/14 bg-white/[0.045] text-slate-300 transition hover:border-cyan-200/35 hover:bg-cyan-300/10 hover:text-cyan-50 disabled:opacity-55";
 const dangerIconActionButton =
   "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-300/22 bg-rose-400/10 text-rose-100 transition hover:bg-rose-400/18 disabled:opacity-55";
+const quotaCriticalRemainingPercent = 5;
 
 const importModeLabels: Record<"refresh" | "access" | "apiKey" | "oauth" | "json", string> = {
   refresh: "Refresh Token",
@@ -142,6 +143,13 @@ const credentialFilterLabels: Record<AutoReplenishRuleRecord["credentialFilter"]
   all: "全部账号",
   has_refresh_token: "仅 Refresh Token",
   access_only: "仅 Access Token",
+};
+
+const planFilterLabels: Record<AutoReplenishRuleRecord["planFilter"], string> = {
+  all: "全部套餐",
+  plus: "Plus",
+  free: "Free",
+  pro: "Pro",
 };
 
 type WorkspaceView = "overview" | "connections" | "proxies" | "add-account" | "inventory" | "activity";
@@ -274,6 +282,10 @@ function read5hRemaining(summary?: RemoteStatusSummary | null) {
   );
 }
 
+function isQuotaCritical(value: number | null) {
+  return typeof value === "number" && value <= quotaCriticalRemainingPercent;
+}
+
 function formatPercent(value: number | null) {
   if (typeof value !== "number" || Number.isNaN(value)) return "未返回";
   return `${Math.round(value * 10) / 10}%`;
@@ -310,6 +322,23 @@ function translateRemoteStatus(value?: string | null) {
 function translateAutoRunStatus(value?: AutoReplenishRuleRecord["lastStatus"] | null) {
   if (!value) return "待机";
   return autoRunStatusLabels[value] ?? value;
+}
+
+function normalizePlanType(value?: string | null) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("plus")) return "plus";
+  if (normalized.includes("pro")) return "pro";
+  if (normalized.includes("free")) return "free";
+  return null;
+}
+
+function accountMatchesAutoRule(account: AccountViewModel, rule: AutoReplenishRuleRecord) {
+  if (account.status !== "active") return false;
+  if (rule.credentialFilter === "has_refresh_token" && !account.hasRefreshToken) return false;
+  if (rule.credentialFilter === "access_only" && account.hasRefreshToken) return false;
+  if (rule.planFilter !== "all" && normalizePlanType(account.planType) !== rule.planFilter) return false;
+  return true;
 }
 
 type AccountExportFormat = "pool" | "sub2api" | "cpa" | "txt";
@@ -449,7 +478,7 @@ function AutoReplenishPanel({
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onRun} disabled={isPending} className={secondaryButton}>
             <RefreshCw className="h-4 w-4" />
-            立即执行
+            立即检测
           </button>
         </div>
       </div>
@@ -472,7 +501,7 @@ function AutoReplenishPanel({
           value={remoteStatus ? formatTime(remoteStatus.updatedAt) : "未检测"}
         />
         <MiniStatus
-          label="下次执行"
+          label="下次检测"
           value={autoRule.nextRunAt ? formatTime(autoRule.nextRunAt) : "未安排"}
         />
       </div>
@@ -491,6 +520,7 @@ function AutoReplenishPanel({
           </span>
           <span>触发: {autoRule.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}</span>
           <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
+          <span>套餐: {planFilterLabels[autoRule.planFilter]}</span>
           <span>目标 {autoRule.targetUsableAccounts}</span>
           <span>单次上限 {autoRule.maxAccountsPerRun}</span>
         </div>
@@ -507,7 +537,7 @@ function AutoReplenishPanel({
           </p>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-4">
+        <div className="grid gap-3 lg:grid-cols-4 xl:grid-cols-5">
           <RuleField label="启用自动补池" help="按间隔自动检测并补号。">
             <input
               type="checkbox"
@@ -534,6 +564,18 @@ function AutoReplenishPanel({
               <option value="all">全部账号</option>
               <option value="has_refresh_token">仅 Refresh Token</option>
               <option value="access_only">仅 Access Token</option>
+            </select>
+          </RuleField>
+          <RuleField label="账号套餐" help="自动补号只从匹配套餐的库存账号里选择。">
+            <select
+              name="planFilter"
+              defaultValue={autoRule.planFilter}
+              className={inputClass}
+            >
+              <option value="all">全部套餐</option>
+              <option value="plus">Plus</option>
+              <option value="free">Free</option>
+              <option value="pro">Pro</option>
             </select>
           </RuleField>
           <RuleField label="检查间隔（分钟）" help="多久检查一次状态。">
@@ -626,7 +668,7 @@ function AutoReplenishPanel({
       <div className="mt-4 grid gap-3">
         {recentRuns.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-4 text-sm text-slate-400">
-            暂无自动补池执行记录。
+            暂无自动补池检测记录。
           </div>
         ) : (
           recentRuns.map((run) => (
@@ -767,29 +809,46 @@ export default function DashboardClient({ data }: Props) {
   const relayReplenishPlans = data.integrations.map((integration) => {
     const remoteStatus = remoteStatusByIntegration[integration.id];
     const autoRule = autoRuleByIntegration.get(integration.id);
-    const targetUsableAccounts = autoRule?.targetUsableAccounts ?? 0;
-    const shortage = remoteStatus
-      ? Math.max(0, targetUsableAccounts - remoteStatus.normalAccounts)
-      : 0;
+    const matchedPoolAccounts = autoRule
+      ? data.accounts.filter((account) => accountMatchesAutoRule(account, autoRule))
+      : activePoolAccounts;
     const remaining5h = read5hRemaining(remoteStatus);
+    const normalLow = Boolean(
+      remoteStatus && autoRule && remoteStatus.normalAccounts < autoRule.minUsableAccounts,
+    );
     const quotaLow =
       typeof remaining5h === "number" && autoRule
         ? remaining5h < autoRule.min5hRemainingPercent
         : false;
-    const warningAccounts = remoteStatus?.warningAccounts ?? 0;
-    const recommendedPushCount = Math.min(
-      activePoolAccounts.length,
-      Math.max(
-        shortage,
-        warningAccounts,
-        quotaLow ? (autoRule?.quotaLowPurchaseCount ?? 0) : 0,
-      ),
+    const quotaCritical = isQuotaCritical(remaining5h);
+    const shouldTrigger = Boolean(
+      autoRule &&
+        remoteStatus &&
+        (quotaCritical ||
+          (autoRule.triggerMode === "all" ? normalLow && quotaLow : normalLow || quotaLow)),
     );
+    const desiredByNormal =
+      normalLow && remoteStatus && autoRule
+        ? Math.max(autoRule.targetUsableAccounts - remoteStatus.normalAccounts, 0)
+        : 0;
+    const desiredByQuota =
+      quotaLow && autoRule && (!autoRule.respectRateLimitRecovery || normalLow || quotaCritical)
+        ? autoRule.quotaLowPurchaseCount
+        : 0;
+    const shortage = shouldTrigger ? desiredByNormal : 0;
+    const warningAccounts = remoteStatus?.warningAccounts ?? 0;
+    const desiredPushCount = shouldTrigger
+      ? Math.min(Math.max(desiredByNormal, desiredByQuota, 0), autoRule?.maxAccountsPerRun ?? 0)
+      : 0;
+    const recommendedPushCount = Math.min(matchedPoolAccounts.length, desiredPushCount);
 
     return {
       integration,
       autoRule,
       remoteStatus,
+      matchedPoolCount: matchedPoolAccounts.length,
+      normalLow,
+      quotaCritical,
       shortage,
       quotaLow,
       warningAccounts,
@@ -1136,6 +1195,7 @@ export default function DashboardClient({ data }: Props) {
       enabled: formData.get("enabled") === "on",
       triggerMode: String(formData.get("triggerMode") || "any"),
       credentialFilter: String(formData.get("credentialFilter") || "all"),
+      planFilter: String(formData.get("planFilter") || "all"),
       intervalMinutes: Number(formData.get("intervalMinutes") || 5),
       minUsableAccounts: Number(formData.get("minUsableAccounts") || 0),
       min5hRemainingPercent: Number(formData.get("min5hRemainingPercent") || 0),
@@ -1529,7 +1589,7 @@ export default function DashboardClient({ data }: Props) {
                       <p className={sectionTitleClass}>中转监视</p>
                       <h2 className="mt-2 text-xl font-semibold text-white">中转监视矩阵</h2>
                       <p className="mt-2 text-sm text-slate-400">
-                        这里只显示检测结果。连接配置、自动补池和手动执行放到“中转管理”页。
+                        这里只显示检测结果。连接配置、自动补池和手动检测放到“中转管理”页。
                       </p>
                     </div>
                     <div className="grid gap-3">
@@ -2823,6 +2883,14 @@ export default function DashboardClient({ data }: Props) {
                                 · 异常 {plan.warningAccounts} · 5h 剩余{" "}
                                 {formatPercent(plan.remaining5h)}
                               </p>
+                              <p className="mt-1 text-xs leading-6 text-slate-500">
+                                规则 {plan.autoRule?.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}
+                                {" · "}
+                                {plan.autoRule ? credentialFilterLabels[plan.autoRule.credentialFilter] : "全部账号"}
+                                {" · "}
+                                {plan.autoRule ? planFilterLabels[plan.autoRule.planFilter] : "全部套餐"}
+                                {plan.quotaCritical ? " · 额度耗尽保护" : ""}
+                              </p>
                             </div>
                             <button
                               type="button"
@@ -2847,7 +2915,7 @@ export default function DashboardClient({ data }: Props) {
                           <div className="mt-4 grid gap-3 sm:grid-cols-3">
                             <MiniStatus label="缺口" value={plan.shortage} />
                             <MiniStatus label="建议补号" value={plan.recommendedPushCount} />
-                            <MiniStatus label="上次检测" value={plan.remoteStatus ? formatTime(plan.remoteStatus.updatedAt) : "未检测"} />
+                            <MiniStatus label="可推库存" value={plan.matchedPoolCount} />
                           </div>
                         </article>
                       );

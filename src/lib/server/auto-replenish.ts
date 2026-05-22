@@ -3,6 +3,7 @@ import "server-only";
 import type {
   AccountRecord,
   AutoReplenishCredentialFilter,
+  AutoReplenishPlanFilter,
   AutoReplenishRuleInput,
   AutoReplenishRuleRecord,
   AutoReplenishRunStatus,
@@ -47,6 +48,7 @@ type GlobalState = typeof globalThis & {
 
 const schedulerState = globalThis as GlobalState;
 const AUTO_SWEEP_INTERVAL_MS = 60_000;
+const QUOTA_CRITICAL_REMAINING_PERCENT = 5;
 
 function toRuleInput(rule: AutoReplenishRuleRecord): AutoReplenishRuleInput {
   return {
@@ -59,6 +61,7 @@ function toRuleInput(rule: AutoReplenishRuleRecord): AutoReplenishRuleInput {
     maxAccountsPerRun: rule.maxAccountsPerRun,
     intervalMinutes: rule.intervalMinutes,
     credentialFilter: rule.credentialFilter,
+    planFilter: rule.planFilter,
     respectRateLimitRecovery: rule.respectRateLimitRecovery,
     rateLimitRecoveryGraceMinutes: rule.rateLimitRecoveryGraceMinutes,
   };
@@ -83,6 +86,13 @@ function read5hRemainingPercent(summary: RemoteStatusSummary) {
   );
 }
 
+function isQuotaCritical(quotaRemaining: number | null) {
+  return (
+    typeof quotaRemaining === "number" &&
+    quotaRemaining <= QUOTA_CRITICAL_REMAINING_PERCENT
+  );
+}
+
 function passesCredentialFilter(
   account: AccountRecord,
   credentialFilter: AutoReplenishCredentialFilter,
@@ -96,6 +106,31 @@ function passesCredentialFilter(
   return true;
 }
 
+function normalizePlanFilter(value?: string | null): Exclude<AutoReplenishPlanFilter, "all"> | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("plus")) return "plus";
+  if (normalized.includes("pro")) return "pro";
+  if (normalized.includes("free")) return "free";
+  return null;
+}
+
+function passesPlanFilter(account: AccountRecord, planFilter: AutoReplenishPlanFilter) {
+  if (planFilter === "all") return true;
+  return normalizePlanFilter(account.planType) === planFilter;
+}
+
+function buildCandidateFilterText(
+  credentialFilter: AutoReplenishCredentialFilter,
+  planFilter: AutoReplenishPlanFilter,
+) {
+  const chunks: string[] = [];
+  if (credentialFilter === "has_refresh_token") chunks.push("仅 Refresh Token");
+  if (credentialFilter === "access_only") chunks.push("仅 Access Token");
+  if (planFilter !== "all") chunks.push(`套餐 ${planFilter.toUpperCase()}`);
+  return chunks.length ? `（筛选：${chunks.join("，")}）` : "";
+}
+
 function sortByIsoAsc(a: string | null, b: string | null) {
   const left = a ? Date.parse(a) : 0;
   const right = b ? Date.parse(b) : 0;
@@ -105,6 +140,7 @@ function sortByIsoAsc(a: string | null, b: string | null) {
 function pickCandidateAccounts(
   integrationId: string,
   credentialFilter: AutoReplenishCredentialFilter,
+  planFilter: AutoReplenishPlanFilter,
   count: number,
 ) {
   const pushStates = new Map(
@@ -120,7 +156,8 @@ function pickCandidateAccounts(
     .filter((account) => account.sourceType === "manual")
     .filter((account) => account.status === "active")
     .filter((account) => account.accessToken.trim())
-    .filter((account) => passesCredentialFilter(account, credentialFilter));
+    .filter((account) => passesCredentialFilter(account, credentialFilter))
+    .filter((account) => passesPlanFilter(account, planFilter));
 
   const untouched = eligible
     .filter((account) => !pushStates.has(account.id))
@@ -166,6 +203,9 @@ function buildTriggerText(
         rule.min5hRemainingPercent,
       )}`,
     );
+  }
+  if (isQuotaCritical(quotaRemaining)) {
+    chunks.push(`5h 剩余已接近耗尽（≤${QUOTA_CRITICAL_REMAINING_PERCENT}%）`);
   }
   return chunks.join("，");
 }
@@ -243,8 +283,9 @@ export async function runAutoReplenishForIntegration(
     const quotaLow =
       typeof quotaRemaining === "number" &&
       quotaRemaining < rule.min5hRemainingPercent;
+    const quotaCritical = isQuotaCritical(quotaRemaining);
     const shouldTrigger =
-      rule.triggerMode === "all" ? normalLow && quotaLow : normalLow || quotaLow;
+      quotaCritical || (rule.triggerMode === "all" ? normalLow && quotaLow : normalLow || quotaLow);
 
     if (!shouldTrigger) {
       const result: AutoReplenishRunResult = {
@@ -270,7 +311,7 @@ export async function runAutoReplenishForIntegration(
       return result;
     }
 
-    if (!normalLow && quotaLow && rule.respectRateLimitRecovery) {
+    if (!normalLow && quotaLow && !quotaCritical && rule.respectRateLimitRecovery) {
       const result: AutoReplenishRunResult = {
         integrationId,
         status: "skipped",
@@ -297,7 +338,7 @@ export async function runAutoReplenishForIntegration(
       ? Math.max(rule.targetUsableAccounts - summary.normalAccounts, 0)
       : 0;
     const desiredByQuota =
-      quotaLow && (!rule.respectRateLimitRecovery || normalLow)
+      quotaLow && (!rule.respectRateLimitRecovery || normalLow || quotaCritical)
         ? rule.quotaLowPurchaseCount
         : 0;
     const desiredCount = Math.min(
@@ -321,14 +362,16 @@ export async function runAutoReplenishForIntegration(
     const { selected, totalEligible } = pickCandidateAccounts(
       integrationId,
       rule.credentialFilter,
+      rule.planFilter,
       desiredCount,
     );
 
     if (selected.length === 0) {
+      const filterText = buildCandidateFilterText(rule.credentialFilter, rule.planFilter);
       const result: AutoReplenishRunResult = {
         integrationId,
         status: "error",
-        message: "已触发自动补号，但本地号池没有可推送账号",
+        message: `已触发自动补号，但本地号池没有可推送账号${filterText}`,
         pushed: 0,
         summary,
         selectedAccountIds: [],
@@ -375,7 +418,7 @@ export async function runAutoReplenishForIntegration(
 
     return result;
   } catch (error) {
-    if (error instanceof Error && error.message === "已触发自动补号，但本地号池没有可推送账号") {
+    if (error instanceof Error && error.message.startsWith("已触发自动补号，但本地号池没有可推送账号")) {
       throw error;
     }
 

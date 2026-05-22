@@ -122,6 +122,7 @@ function getDb() {
       max_accounts_per_run INTEGER NOT NULL,
       interval_minutes INTEGER NOT NULL,
       credential_filter TEXT NOT NULL,
+      plan_filter TEXT NOT NULL DEFAULT 'all',
       respect_rate_limit_recovery INTEGER NOT NULL DEFAULT 1,
       rate_limit_recovery_grace_minutes INTEGER NOT NULL,
       last_run_at TEXT,
@@ -181,6 +182,7 @@ function getDb() {
     "ALTER TABLE integrations ADD COLUMN last_status_checked_at TEXT",
     "ALTER TABLE proxies ADD COLUMN last_test_ip TEXT",
     "ALTER TABLE proxies ADD COLUMN last_test_location TEXT",
+    "ALTER TABLE auto_replenish_rules ADD COLUMN plan_filter TEXT NOT NULL DEFAULT 'all'",
   ]) {
     try {
       db.exec(statement);
@@ -305,6 +307,10 @@ function mapAutoReplenishRuleRow(row: Record<string, unknown>): AutoReplenishRul
     intervalMinutes: Number(row.interval_minutes ?? 0),
     credentialFilter:
       row.credential_filter as AutoReplenishRuleRecord["credentialFilter"],
+    planFilter:
+      row.plan_filter === "plus" || row.plan_filter === "free" || row.plan_filter === "pro"
+        ? row.plan_filter
+        : "all",
     respectRateLimitRecovery: toBool(row.respect_rate_limit_recovery),
     rateLimitRecoveryGraceMinutes: Number(
       row.rate_limit_recovery_grace_minutes ?? 0,
@@ -507,6 +513,7 @@ export function createDefaultAutoReplenishRule(
     maxAccountsPerRun: 3,
     intervalMinutes: 5,
     credentialFilter: "all",
+    planFilter: "all",
     respectRateLimitRecovery: true,
     rateLimitRecoveryGraceMinutes: 30,
     lastRunAt: null,
@@ -1144,10 +1151,10 @@ export function upsertAutoReplenishRule(
     INSERT INTO auto_replenish_rules (
       id, integration_id, enabled, trigger_mode, min_usable_accounts,
       min_5h_remaining_percent, target_usable_accounts, quota_low_purchase_count,
-      max_accounts_per_run, interval_minutes, credential_filter,
+      max_accounts_per_run, interval_minutes, credential_filter, plan_filter,
       respect_rate_limit_recovery, rate_limit_recovery_grace_minutes,
       last_run_at, next_run_at, last_status, last_message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
     ON CONFLICT(integration_id) DO UPDATE SET
       enabled = excluded.enabled,
       trigger_mode = excluded.trigger_mode,
@@ -1158,6 +1165,7 @@ export function upsertAutoReplenishRule(
       max_accounts_per_run = excluded.max_accounts_per_run,
       interval_minutes = excluded.interval_minutes,
       credential_filter = excluded.credential_filter,
+      plan_filter = excluded.plan_filter,
       respect_rate_limit_recovery = excluded.respect_rate_limit_recovery,
       rate_limit_recovery_grace_minutes = excluded.rate_limit_recovery_grace_minutes,
       next_run_at = excluded.next_run_at,
@@ -1174,6 +1182,7 @@ export function upsertAutoReplenishRule(
     input.maxAccountsPerRun,
     input.intervalMinutes,
     input.credentialFilter,
+    input.planFilter,
     input.respectRateLimitRecovery ? 1 : 0,
     input.rateLimitRecoveryGraceMinutes,
     input.enabled

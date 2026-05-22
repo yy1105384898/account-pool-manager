@@ -9,6 +9,7 @@ export const autoReplenishCredentialFilters = [
   "has_refresh_token",
   "access_only",
 ] as const;
+export const autoReplenishPlanFilters = ["all", "plus", "free", "pro"] as const;
 export const autoReplenishRunStatuses = ["success", "error", "skipped"] as const;
 export const accountStatuses = [
   "active",
@@ -30,6 +31,7 @@ export type AutoReplenishTriggerMode =
   (typeof autoReplenishTriggerModes)[number];
 export type AutoReplenishCredentialFilter =
   (typeof autoReplenishCredentialFilters)[number];
+export type AutoReplenishPlanFilter = (typeof autoReplenishPlanFilters)[number];
 export type AutoReplenishRunStatus = (typeof autoReplenishRunStatuses)[number];
 
 export type RemoteStatusSummary = {
@@ -129,6 +131,7 @@ export type AutoReplenishRuleRecord = {
   maxAccountsPerRun: number;
   intervalMinutes: number;
   credentialFilter: AutoReplenishCredentialFilter;
+  planFilter: AutoReplenishPlanFilter;
   respectRateLimitRecovery: boolean;
   rateLimitRecoveryGraceMinutes: number;
   lastRunAt: string | null;
@@ -280,6 +283,7 @@ export const autoReplenishRuleSchema = z.object({
   maxAccountsPerRun: z.int().min(1).max(999).default(3),
   intervalMinutes: z.int().min(1).max(1440).default(5),
   credentialFilter: z.enum(autoReplenishCredentialFilters).default("all"),
+  planFilter: z.enum(autoReplenishPlanFilters).default("all"),
   respectRateLimitRecovery: z.boolean().default(true),
   rateLimitRecoveryGraceMinutes: z.int().min(0).max(1440).default(30),
 });
