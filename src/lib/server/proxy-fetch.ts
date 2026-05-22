@@ -1,11 +1,94 @@
 import "server-only";
 
-import { ProxyAgent } from "undici";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import type { RequestOptions } from "node:https";
+import { HttpProxyAgent } from "http-proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
 import type { ProxyRecord } from "@/lib/types";
 import { getFirstEnabledProxy } from "@/lib/server/db";
 
 export function resolveProxyUrl(proxy?: ProxyRecord | null) {
   return proxy?.enabled ? proxy.url : null;
+}
+
+function createProxyAgent(proxyUrl: string, targetProtocol: string) {
+  const protocol = new URL(proxyUrl).protocol.toLowerCase();
+  if (protocol.startsWith("socks")) return new SocksProxyAgent(proxyUrl);
+  if (protocol === "http:" || protocol === "https:") {
+    return targetProtocol === "https:"
+      ? new HttpsProxyAgent(proxyUrl)
+      : new HttpProxyAgent(proxyUrl);
+  }
+
+  throw new Error(`不支持的代理协议：${protocol.replace(":", "")}`);
+}
+
+function bodyToBuffer(body: RequestInit["body"]) {
+  if (!body) return null;
+  if (typeof body === "string") return Buffer.from(body);
+  if (body instanceof URLSearchParams) return Buffer.from(body.toString());
+  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  if (ArrayBuffer.isView(body)) {
+    return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  }
+
+  throw new Error("当前代理请求暂不支持这种请求体");
+}
+
+async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: string) {
+  const target = new URL(input);
+  const body = bodyToBuffer(init.body);
+  const headers = new Headers(init.headers);
+  if (body && !headers.has("content-length")) {
+    headers.set("content-length", String(body.byteLength));
+  }
+
+  const requestOptions: RequestOptions = {
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port || undefined,
+    path: `${target.pathname}${target.search}`,
+    method: init.method ?? (body ? "POST" : "GET"),
+    headers: Object.fromEntries(headers.entries()),
+    agent: createProxyAgent(proxyUrl, target.protocol) as RequestOptions["agent"],
+    timeout: 20000,
+  };
+  const transport = target.protocol === "http:" ? httpRequest : httpsRequest;
+
+  return new Promise<Response>((resolve, reject) => {
+    const req = transport(requestOptions, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", () => {
+        resolve(
+          new Response(Buffer.concat(chunks), {
+            status: res.statusCode ?? 0,
+            statusText: res.statusMessage,
+            headers: res.headers as HeadersInit,
+          }),
+        );
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error("代理请求超时"));
+    });
+    req.on("error", (error: NodeJS.ErrnoException) => {
+      reject(new Error(error.code ? `${error.message} (${error.code})` : error.message));
+    });
+
+    if (init.signal) {
+      if (init.signal.aborted) req.destroy(new Error("请求已取消"));
+      init.signal.addEventListener("abort", () => req.destroy(new Error("请求已取消")), {
+        once: true,
+      });
+    }
+
+    if (body) req.write(body);
+    req.end();
+  });
 }
 
 export async function fetchViaProxy(
@@ -16,8 +99,5 @@ export async function fetchViaProxy(
   const proxyUrl = resolveProxyUrl(proxy ?? getFirstEnabledProxy());
   if (!proxyUrl) return fetch(input, init);
 
-  return fetch(input, {
-    ...init,
-    dispatcher: new ProxyAgent(proxyUrl),
-  } as RequestInit & { dispatcher: ProxyAgent });
+  return fetchWithNodeProxy(input, init, proxyUrl);
 }

@@ -32,7 +32,8 @@ export async function POST(_: Request, context: RouteContext) {
       message: ok ? `代理可用，延迟 ${latency}ms` : `代理异常，OpenAI 返回 ${response.status}`,
     }, { status: ok ? 200 : 400 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "代理测试失败";
+    const detail = error instanceof Error ? error.message : "未知错误";
+    const message = `代理连接失败：${detail}`;
     updateProxy(id, { lastTestStatus: "error", lastTestMessage: message, lastLatencyMs: Date.now() - started });
     revalidatePath("/");
     return NextResponse.json({ ok: false, error: message }, { status: 400 });

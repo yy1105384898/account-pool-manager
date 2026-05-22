@@ -21,7 +21,11 @@ import {
   ServerCog,
   ShieldCheck,
   LogOut,
+  Pencil,
+  Play,
+  Power,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import type {
   AccountStatus,
@@ -97,6 +101,10 @@ const primaryButton =
   `${buttonBase} border border-cyan-200/40 bg-cyan-300/90 text-slate-950 shadow-[0_0_35px_rgba(34,211,238,0.22)] hover:bg-cyan-200`;
 const dangerButton =
   `${buttonBase} border border-rose-300/25 bg-rose-400/12 text-rose-100 hover:bg-rose-400/18`;
+const iconActionButton =
+  "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-200/14 bg-white/[0.045] text-slate-300 transition hover:border-cyan-200/35 hover:bg-cyan-300/10 hover:text-cyan-50 disabled:opacity-55";
+const dangerIconActionButton =
+  "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-300/22 bg-rose-400/10 text-rose-100 transition hover:bg-rose-400/18 disabled:opacity-55";
 
 const importModeLabels: Record<"refresh" | "access" | "apiKey" | "oauth" | "json", string> = {
   refresh: "Refresh Token",
@@ -629,6 +637,7 @@ export default function DashboardClient({ data }: Props) {
   const [oauthVerifier, setOauthVerifier] = useState("");
   const [activityLimit, setActivityLimit] = useState(30);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [editingProxy, setEditingProxy] = useState<DashboardData["proxies"][number] | null>(null);
   const [remoteStatusOverrides, setRemoteStatusOverrides] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -916,12 +925,87 @@ export default function DashboardClient({ data }: Props) {
     );
   }
 
+  function saveProxyEdit(formData: FormData) {
+    if (!editingProxy) return;
+    runTask(async () => {
+      const result = await callApi(`/api/proxies/${editingProxy.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: String(formData.get("name") || ""),
+          url: String(formData.get("url") || ""),
+          enabled: formData.get("enabled") === "on",
+        }),
+      });
+      if (result.ok) setEditingProxy(null);
+      return result;
+    });
+  }
+
   function testProxy(id: string) {
     runTask(() => callApi(`/api/proxies/${id}/test`, { method: "POST" }));
   }
 
+  function testAllProxies() {
+    runTask(async () => {
+      if (data.proxies.length === 0) return { ok: false, error: "没有可测试的代理" };
+      const results = await Promise.all(
+        data.proxies.map((proxy) => callApi(`/api/proxies/${proxy.id}/test`, { method: "POST" })),
+      );
+      const successCount = results.filter((item) => item.ok).length;
+      const errorCount = results.length - successCount;
+      return {
+        ok: successCount > 0,
+        error: `已测试 ${results.length} 个，可用 ${successCount} 个，异常 ${errorCount} 个`,
+        message: `已测试 ${results.length} 个，可用 ${successCount} 个，异常 ${errorCount} 个`,
+      };
+    });
+  }
+
+  function disableFailedProxies() {
+    runTask(async () => {
+      const failed = data.proxies.filter((proxy) => proxy.lastTestStatus === "error");
+      if (failed.length === 0) return { ok: false, error: "没有异常代理需要停用" };
+      const results = await Promise.all(
+        failed.map((proxy) =>
+          callApi(`/api/proxies/${proxy.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: false }),
+          }),
+        ),
+      );
+      const count = results.filter((item) => item.ok).length;
+      return {
+        ok: count > 0,
+        error: "停用异常代理失败",
+        message: `已停用 ${count} 个异常代理`,
+      };
+    });
+  }
+
   function deleteProxy(id: string) {
     runTask(() => callApi(`/api/proxies/${id}`, { method: "DELETE" }));
+  }
+
+  function deleteFailedProxies() {
+    const failed = data.proxies.filter((proxy) => proxy.lastTestStatus === "error");
+    if (failed.length === 0) {
+      setNotice({ type: "error", text: "没有异常代理可清理" });
+      return;
+    }
+    if (!window.confirm(`确认删除 ${failed.length} 个异常代理？`)) return;
+    runTask(async () => {
+      const results = await Promise.all(
+        failed.map((proxy) => callApi(`/api/proxies/${proxy.id}`, { method: "DELETE" })),
+      );
+      const count = results.filter((item) => item.ok).length;
+      return {
+        ok: count > 0,
+        error: "删除异常代理失败",
+        message: `已删除 ${count} 个异常代理`,
+      };
+    });
   }
 
   function refreshRemoteStatus(integrationId: string) {
@@ -1752,10 +1836,23 @@ export default function DashboardClient({ data }: Props) {
                       仅用于直连 OpenAI 的库存检测、OAuth、API Key 请求；codexproxy/sub2api/CPA 中转检测和推送不使用这里的代理。
                     </p>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <MiniStatus label="总代理" value={data.proxies.length} />
-                    <MiniStatus label="启用" value={data.proxies.filter((item) => item.enabled).length} />
-                    <MiniStatus label="可用" value={data.proxies.filter((item) => item.lastTestStatus === "success").length} />
+                  <div className="grid gap-3">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <MiniStatus label="总代理" value={data.proxies.length} />
+                      <MiniStatus label="启用" value={data.proxies.filter((item) => item.enabled).length} />
+                      <MiniStatus label="可用" value={data.proxies.filter((item) => item.lastTestStatus === "success").length} />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <button type="button" disabled={isPending || data.proxies.length === 0} onClick={testAllProxies} className={secondaryButton}>
+                        全部测试
+                      </button>
+                      <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={disableFailedProxies} className={secondaryButton}>
+                        停用异常
+                      </button>
+                      <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={deleteFailedProxies} className={dangerButton}>
+                        清理异常
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1780,13 +1877,14 @@ export default function DashboardClient({ data }: Props) {
                           <th className="px-4 py-3">状态</th>
                           <th className="px-4 py-3">延迟</th>
                           <th className="px-4 py-3">测试结果</th>
+                          <th className="px-4 py-3">最后检测</th>
                           <th className="px-4 py-3">操作</th>
                         </tr>
                       </thead>
                       <tbody>
                         {data.proxies.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                            <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
                               还没有代理。库存账号检测 OpenAI 时会直连，建议先添加代理。
                             </td>
                           </tr>
@@ -1814,16 +1912,22 @@ export default function DashboardClient({ data }: Props) {
                               <p>{proxy.lastTestStatus === "success" ? "可用" : proxy.lastTestStatus === "error" ? "异常" : "未测试"}</p>
                               <p className="mt-1">{maskSensitiveText(proxy.lastTestMessage)}</p>
                             </td>
+                            <td className="px-4 py-4 text-xs text-slate-400">
+                              {formatTime(proxy.lastTestedAt)}
+                            </td>
                             <td className="px-4 py-4">
                               <div className="flex flex-wrap gap-2">
-                                <button type="button" disabled={isPending} onClick={() => testProxy(proxy.id)} className={secondaryButton}>
-                                  测试
+                                <button type="button" disabled={isPending} onClick={() => setEditingProxy(proxy)} className={iconActionButton} title="编辑/改名" aria-label="编辑/改名">
+                                  <Pencil className="h-4 w-4" />
                                 </button>
-                                <button type="button" disabled={isPending} onClick={() => updateProxyState(proxy.id, !proxy.enabled)} className={secondaryButton}>
-                                  {proxy.enabled ? "停用" : "启用"}
+                                <button type="button" disabled={isPending} onClick={() => testProxy(proxy.id)} className={iconActionButton} title="测试" aria-label="测试">
+                                  <Play className="h-4 w-4" />
                                 </button>
-                                <button type="button" disabled={isPending} onClick={() => deleteProxy(proxy.id)} className={dangerButton}>
-                                  删除
+                                <button type="button" disabled={isPending} onClick={() => updateProxyState(proxy.id, !proxy.enabled)} className={iconActionButton} title={proxy.enabled ? "停用" : "启用"} aria-label={proxy.enabled ? "停用" : "启用"}>
+                                  <Power className="h-4 w-4" />
+                                </button>
+                                <button type="button" disabled={isPending} onClick={() => deleteProxy(proxy.id)} className={dangerIconActionButton} title="删除" aria-label="删除">
+                                  <Trash2 className="h-4 w-4" />
                                 </button>
                               </div>
                             </td>
@@ -1834,6 +1938,67 @@ export default function DashboardClient({ data }: Props) {
                   </div>
                 </div>
               </section>
+            ) : null}
+
+            {editingProxy ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/72 px-4 py-6 backdrop-blur-sm">
+                <form
+                  action={saveProxyEdit}
+                  className="cyber-card w-full max-w-[560px] overflow-hidden rounded-[1.6rem] border border-cyan-200/18 bg-slate-950/95 shadow-[0_30px_120px_rgba(0,0,0,0.58)]"
+                >
+                  <div className="flex items-center justify-between border-b border-cyan-200/12 px-5 py-4">
+                    <div>
+                      <p className={sectionTitleClass}>Proxy Settings</p>
+                      <h3 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-white">编辑代理</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingProxy(null)}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-sm text-slate-300 hover:bg-white/[0.08]"
+                    >
+                      关闭
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4 p-5">
+                    <ImportField label="代理地址">
+                      <input
+                        name="url"
+                        defaultValue={editingProxy.url}
+                        placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891"
+                        className={inputClass}
+                      />
+                    </ImportField>
+                    <ImportField label="标签 / 名称">
+                      <input
+                        name="name"
+                        defaultValue={editingProxy.name}
+                        placeholder="例如 新加坡 socks5"
+                        className={inputClass}
+                      />
+                    </ImportField>
+                    <label className="inline-flex items-center gap-2 rounded-2xl border border-cyan-200/12 bg-white/[0.035] px-4 py-3 text-sm text-slate-300">
+                      <input name="enabled" type="checkbox" defaultChecked={editingProxy.enabled} className="accent-cyan-300" />
+                      启用这个代理
+                    </label>
+                    <div className="rounded-2xl border border-cyan-200/12 bg-cyan-300/8 px-4 py-3 text-xs leading-6 text-slate-400">
+                      代理只会用于直连 OpenAI 的检测、OAuth 和 API Key 请求；中转站检测/推送不经过这里。
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap justify-end gap-2 border-t border-cyan-200/12 px-5 py-4">
+                    <button type="button" onClick={() => testProxy(editingProxy.id)} disabled={isPending} className={secondaryButton}>
+                      先测试
+                    </button>
+                    <button type="button" onClick={() => setEditingProxy(null)} className={secondaryButton}>
+                      取消
+                    </button>
+                    <button disabled={isPending} className={primaryButton}>
+                      保存
+                    </button>
+                  </div>
+                </form>
+              </div>
             ) : null}
 
             {activeView === "add-account" ? (
