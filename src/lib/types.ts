@@ -1,0 +1,168 @@
+import { z } from "zod";
+
+export const integrationTypes = ["codexproxy", "sub2api", "cpa"] as const;
+export const authModes = ["none", "bearer", "cookie", "header"] as const;
+export const accountSources = ["manual", "codexproxy", "sub2api", "cpa"] as const;
+export const accountStatuses = [
+  "active",
+  "inactive",
+  "disabled",
+  "expired",
+  "banned",
+  "error",
+  "quota_exhausted",
+  "refreshing",
+  "unknown",
+] as const;
+
+export type IntegrationType = (typeof integrationTypes)[number];
+export type AuthMode = (typeof authModes)[number];
+export type AccountSource = (typeof accountSources)[number];
+export type AccountStatus = (typeof accountStatuses)[number];
+
+export type IntegrationRecord = {
+  id: string;
+  name: string;
+  type: IntegrationType;
+  baseUrl: string;
+  authMode: AuthMode;
+  authValue: string | null;
+  authHeaderName: string | null;
+  enabled: boolean;
+  notes: string | null;
+  lastTestStatus: "success" | "error" | null;
+  lastTestMessage: string | null;
+  lastSyncedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AccountRecord = {
+  id: string;
+  sourceType: AccountSource;
+  sourceIntegrationId: string | null;
+  remoteId: string | null;
+  email: string | null;
+  label: string | null;
+  accountId: string | null;
+  userId: string | null;
+  accessToken: string;
+  refreshToken: string | null;
+  planType: string | null;
+  status: AccountStatus;
+  remoteStatus: string | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  lastImportedAt: string | null;
+  lastStatusCheckedAt: string | null;
+  lastPushedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ActivityLogRecord = {
+  id: string;
+  kind: string;
+  status: "success" | "error" | "info";
+  title: string;
+  detail: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AccountViewModel = {
+  id: string;
+  sourceType: AccountSource;
+  sourceIntegrationId: string | null;
+  remoteId: string | null;
+  email: string | null;
+  label: string | null;
+  accountId: string | null;
+  userId: string | null;
+  planType: string | null;
+  status: AccountStatus;
+  remoteStatus: string | null;
+  notes: string | null;
+  tokenPreview: string;
+  hasRefreshToken: boolean;
+  lastImportedAt: string | null;
+  lastStatusCheckedAt: string | null;
+  lastPushedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type IntegrationViewModel = Omit<IntegrationRecord, "authValue"> & {
+  authConfigured: boolean;
+  authPreview: string | null;
+};
+
+export type DashboardSummary = {
+  totalAccounts: number;
+  activeAccounts: number;
+  warningAccounts: number;
+  integrationCount: number;
+};
+
+export type DashboardData = {
+  summary: DashboardSummary;
+  accounts: AccountViewModel[];
+  integrations: IntegrationViewModel[];
+  logs: ActivityLogRecord[];
+};
+
+const trimmedOptional = z
+  .string()
+  .trim()
+  .max(4000)
+  .optional()
+  .transform((value) => {
+    if (!value) return undefined;
+    return value;
+  });
+
+export const integrationInputSchema = z.object({
+  name: z.string().trim().min(1, "名称不能为空").max(80, "名称过长"),
+  type: z.enum(integrationTypes),
+  baseUrl: z.url("请输入正确的地址").transform((value) => value.replace(/\/+$/, "")),
+  authMode: z.enum(authModes),
+  authValue: trimmedOptional,
+  authHeaderName: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .transform((value) => {
+      if (!value) return undefined;
+      return value;
+    }),
+  notes: trimmedOptional,
+});
+
+export const manualAccountInputSchema = z.object({
+  label: z.string().trim().max(120).optional(),
+  email: z.email("邮箱格式不正确").optional().or(z.literal("")),
+  accountId: z.string().trim().max(120).optional(),
+  userId: z.string().trim().max(120).optional(),
+  planType: z.string().trim().max(60).optional(),
+  accessToken: z.string().trim().min(1, "access token 不能为空"),
+  refreshToken: z.string().trim().optional(),
+  status: z.enum(accountStatuses).default("active"),
+  notes: trimmedOptional,
+});
+
+export const accountPatchSchema = z.object({
+  label: z.string().trim().max(120).optional(),
+  notes: trimmedOptional,
+  status: z.enum(accountStatuses).optional(),
+});
+
+export const pushRequestSchema = z.object({
+  integrationId: z.string().trim().min(1),
+  accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
+});
+
+export type IntegrationInput = z.infer<typeof integrationInputSchema>;
+export type ManualAccountInput = z.infer<typeof manualAccountInputSchema>;
+export type AccountPatchInput = z.infer<typeof accountPatchSchema>;
+export type PushRequestInput = z.infer<typeof pushRequestSchema>;

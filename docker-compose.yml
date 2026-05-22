@@ -1,0 +1,14 @@
+services:
+  account-pool-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: account-pool-manager
+    ports:
+      - "3015:3000"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      - ./data:/app/data
