@@ -7,7 +7,7 @@ import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import type { ProxyRecord } from "@/lib/types";
-import { getFirstEnabledProxy } from "@/lib/server/db";
+import { getNextEnabledProxy } from "@/lib/server/db";
 
 export function resolveProxyUrl(proxy?: ProxyRecord | null) {
   return proxy?.enabled ? proxy.url : null;
@@ -96,7 +96,8 @@ export async function fetchViaProxy(
   init: RequestInit = {},
   proxy?: ProxyRecord | null,
 ) {
-  const proxyUrl = resolveProxyUrl(proxy ?? getFirstEnabledProxy());
+  const selectedProxy = proxy === undefined ? getNextEnabledProxy() : proxy;
+  const proxyUrl = resolveProxyUrl(selectedProxy);
   if (!proxyUrl) return fetch(input, init);
 
   return fetchWithNodeProxy(input, init, proxyUrl);

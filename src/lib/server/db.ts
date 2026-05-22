@@ -467,6 +467,14 @@ export function setStoredAdminPassword(password: string) {
   setAppSetting("admin_password", password);
 }
 
+export function getProxyPoolEnabled() {
+  return getAppSetting("proxy_pool_enabled") !== "false";
+}
+
+export function setProxyPoolEnabled(enabled: boolean) {
+  setAppSetting("proxy_pool_enabled", enabled ? "true" : "false");
+}
+
 export function createDefaultAutoReplenishRule(
   integrationId: string,
 ): AutoReplenishRuleRecord {
@@ -531,6 +539,22 @@ export function getFirstEnabledProxy() {
     .prepare("SELECT * FROM proxies WHERE enabled = 1 ORDER BY updated_at DESC LIMIT 1")
     .get() as Record<string, unknown> | undefined;
   return row ? mapProxyRow(row) : null;
+}
+
+export function getNextEnabledProxy() {
+  if (!getProxyPoolEnabled()) return null;
+
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT * FROM proxies WHERE enabled = 1 ORDER BY created_at ASC, id ASC")
+    .all() as Record<string, unknown>[];
+  if (rows.length === 0) return null;
+
+  const lastId = getAppSetting("proxy_rotation_last_id");
+  const currentIndex = rows.findIndex((row) => String(row.id) === lastId);
+  const nextRow = rows[(currentIndex + 1) % rows.length] ?? rows[0];
+  setAppSetting("proxy_rotation_last_id", String(nextRow.id));
+  return mapProxyRow(nextRow);
 }
 
 export function createProxy(input: ProxyInput) {
@@ -1201,6 +1225,7 @@ export function getDashboardData(): DashboardData {
     integrations: integrations.map(toIntegrationView),
     logs,
     proxies,
+    proxyPoolEnabled: getProxyPoolEnabled(),
     autoRules,
     autoRuns,
   };

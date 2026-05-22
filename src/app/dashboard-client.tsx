@@ -1008,6 +1008,16 @@ export default function DashboardClient({ data }: Props) {
     });
   }
 
+  function updateProxyPoolEnabled(enabled: boolean) {
+    runTask(() =>
+      callApi("/api/proxies/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      }),
+    );
+  }
+
   function refreshRemoteStatus(integrationId: string) {
     runTask(async () => {
       const response = await fetch(`/api/integrations/${integrationId}/status`, {
@@ -1833,25 +1843,38 @@ export default function DashboardClient({ data }: Props) {
                       代理管理
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-slate-400">
-                      仅用于直连 OpenAI 的库存检测、OAuth、API Key 请求；codexproxy/sub2api/CPA 中转检测和推送不使用这里的代理。
+                      启用代理池后，直连 OpenAI 的库存检测、OAuth、API Key 请求会按启用代理轮询；中转站检测和推送不走代理。
                     </p>
                   </div>
                   <div className="grid gap-3">
                     <div className="grid gap-3 sm:grid-cols-3">
                       <MiniStatus label="总代理" value={data.proxies.length} />
                       <MiniStatus label="启用" value={data.proxies.filter((item) => item.enabled).length} />
-                      <MiniStatus label="可用" value={data.proxies.filter((item) => item.lastTestStatus === "success").length} />
+                      <MiniStatus label="轮询" value={data.proxyPoolEnabled ? "已启用" : "已停用"} />
                     </div>
                     <div className="grid gap-2 sm:grid-cols-3">
+                      <button
+                        type="button"
+                        disabled={isPending || (data.proxies.length === 0 && !data.proxyPoolEnabled)}
+                        onClick={() => updateProxyPoolEnabled(!data.proxyPoolEnabled)}
+                        className={data.proxyPoolEnabled ? secondaryButton : primaryButton}
+                      >
+                        {data.proxyPoolEnabled ? "停用轮询" : "启用轮询"}
+                      </button>
                       <button type="button" disabled={isPending || data.proxies.length === 0} onClick={testAllProxies} className={secondaryButton}>
                         全部测试
                       </button>
                       <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={disableFailedProxies} className={secondaryButton}>
                         停用异常
                       </button>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
                       <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={deleteFailedProxies} className={dangerButton}>
                         清理异常
                       </button>
+                      <div className="rounded-2xl border border-cyan-200/12 bg-cyan-300/8 px-4 py-3 text-xs leading-5 text-slate-300">
+                        当前策略：{data.proxyPoolEnabled ? "按启用代理顺序轮询" : "直连 OpenAI，不使用代理池"}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1982,7 +2005,7 @@ export default function DashboardClient({ data }: Props) {
                       启用这个代理
                     </label>
                     <div className="rounded-2xl border border-cyan-200/12 bg-cyan-300/8 px-4 py-3 text-xs leading-6 text-slate-400">
-                      代理只会用于直连 OpenAI 的检测、OAuth 和 API Key 请求；中转站检测/推送不经过这里。
+                      代理池启用后，这个代理会参与直连 OpenAI 请求轮询；中转站检测/推送不经过这里。
                     </div>
                   </div>
 

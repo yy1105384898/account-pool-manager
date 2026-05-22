@@ -194,6 +194,7 @@ export type DashboardData = {
   integrations: IntegrationViewModel[];
   logs: ActivityLogRecord[];
   proxies: ProxyRecord[];
+  proxyPoolEnabled: boolean;
   autoRules: AutoReplenishRuleRecord[];
   autoRuns: AutoReplenishRunRecord[];
 };
