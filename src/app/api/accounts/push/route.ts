@@ -24,7 +24,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "未找到可推送账号" }, { status: 404 });
     }
 
-    const result = await pushAccountsToIntegration(integration, accounts);
+    const result = await pushAccountsToIntegration(integration, accounts, {
+      targetGroups: payload.targetGroups ?? [],
+      cloneAccountId: payload.cloneAccountId || null,
+      pushNotes: payload.pushNotes || null,
+    });
     markAccountsPushed(accounts.map((item) => item.id));
     recordAccountsPushedToIntegration(
       integration.id,

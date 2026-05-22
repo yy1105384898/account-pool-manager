@@ -145,12 +145,17 @@ const credentialFilterLabels: Record<AutoReplenishRuleRecord["credentialFilter"]
   access_only: "仅 Access Token",
 };
 
-const planFilterLabels: Record<AutoReplenishRuleRecord["planFilter"], string> = {
-  all: "全部套餐",
+const planFilterLabels: Record<AutoReplenishRuleRecord["planFilters"][number], string> = {
   plus: "Plus",
   free: "Free",
   pro: "Pro",
 };
+
+function formatPlanFilters(planFilters: AutoReplenishRuleRecord["planFilters"]) {
+  return planFilters.length
+    ? planFilters.map((item) => planFilterLabels[item]).join(" / ")
+    : "全部套餐";
+}
 
 type WorkspaceView = "overview" | "connections" | "proxies" | "add-account" | "inventory" | "activity";
 
@@ -337,7 +342,10 @@ function accountMatchesAutoRule(account: AccountViewModel, rule: AutoReplenishRu
   if (account.status !== "active") return false;
   if (rule.credentialFilter === "has_refresh_token" && !account.hasRefreshToken) return false;
   if (rule.credentialFilter === "access_only" && account.hasRefreshToken) return false;
-  if (rule.planFilter !== "all" && normalizePlanType(account.planType) !== rule.planFilter) return false;
+  if (rule.planFilters.length > 0) {
+    const normalizedPlan = normalizePlanType(account.planType);
+    if (!normalizedPlan || !rule.planFilters.includes(normalizedPlan)) return false;
+  }
   return true;
 }
 
@@ -347,6 +355,12 @@ type InventoryPlanFilter = "all" | "plus" | "free" | "pro" | "unknown";
 type InventoryAvailabilityFilter = "all" | "active" | "unavailable";
 type InventoryPushFilter = "all" | "pushed" | "unpushed";
 type InventorySortMode = "unpushed_first" | "pushed_first" | "updated_desc";
+type AccountTemplatePreview = {
+  accountId?: string;
+  groups?: string[];
+  proxy?: unknown;
+  notes?: string | null;
+};
 
 type Props = {
   data: DashboardData;
@@ -464,6 +478,37 @@ function AutoReplenishPanel({
   onRun: () => void;
 }) {
   const recentRuns = autoRuns.slice(0, 3);
+  const [groupText, setGroupText] = useState(autoRule.targetGroups.join("\n"));
+  const [templatePreview, setTemplatePreview] = useState<AccountTemplatePreview | null>(null);
+  const [templateError, setTemplateError] = useState("");
+
+  async function syncTemplate(form: HTMLFormElement) {
+    const formData = new FormData(form);
+    const accountId = String(formData.get("cloneAccountId") || "").trim();
+    if (!accountId) {
+      setTemplateError("先填写模板账号 ID");
+      return;
+    }
+
+    setTemplateError("");
+    const response = await fetch(
+      `/api/integrations/${integration.id}/account-template?accountId=${encodeURIComponent(accountId)}`,
+      { cache: "no-store" },
+    );
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; template?: AccountTemplatePreview }
+      | null;
+    if (!response.ok || payload?.ok === false || !payload?.template) {
+      setTemplatePreview(null);
+      setTemplateError(payload?.error ?? "同步模板失败");
+      return;
+    }
+
+    setTemplatePreview(payload.template);
+    if (payload.template.groups?.length) {
+      setGroupText(payload.template.groups.join("\n"));
+    }
+  }
 
   return (
     <div className="mt-4 rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/38 p-4">
@@ -524,7 +569,7 @@ function AutoReplenishPanel({
           </span>
           <span>触发: {autoRule.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}</span>
           <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
-          <span>套餐: {planFilterLabels[autoRule.planFilter]}</span>
+          <span>套餐: {formatPlanFilters(autoRule.planFilters)}</span>
           <span>目标 {autoRule.targetUsableAccounts}</span>
           <span>单次上限 {autoRule.maxAccountsPerRun}</span>
         </div>
@@ -570,17 +615,21 @@ function AutoReplenishPanel({
               <option value="access_only">仅 Access Token</option>
             </select>
           </RuleField>
-          <RuleField label="账号套餐" help="自动补号只从匹配套餐的库存账号里选择。">
-            <select
-              name="planFilter"
-              defaultValue={autoRule.planFilter}
-              className={inputClass}
-            >
-              <option value="all">全部套餐</option>
-              <option value="plus">Plus</option>
-              <option value="free">Free</option>
-              <option value="pro">Pro</option>
-            </select>
+          <RuleField label="推号套餐" help="可多选；都不选表示不限套餐。">
+            <div className="grid gap-2 text-sm text-slate-300">
+              {(["plus", "free", "pro"] as const).map((plan) => (
+                <label key={plan} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2">
+                  <input
+                    type="checkbox"
+                    name="planFilters"
+                    value={plan}
+                    defaultChecked={autoRule.planFilters.includes(plan)}
+                    className="h-4 w-4 accent-cyan-300"
+                  />
+                  {planFilterLabels[plan]}
+                </label>
+              ))}
+            </div>
           </RuleField>
           <RuleField label="检查间隔（分钟）" help="多久检查一次状态。">
             <input
@@ -662,6 +711,58 @@ function AutoReplenishPanel({
               defaultValue={autoRule.rateLimitRecoveryGraceMinutes}
               className={inputClass}
             />
+          </RuleField>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <RuleField label="目标分组（可多选）" help="每行一个分组；为空时使用模板账号原配置。">
+            <textarea
+              name="targetGroups"
+              value={groupText}
+              onChange={(event) => setGroupText(event.target.value)}
+              rows={4}
+              placeholder="例如：plus-pool&#10;backup"
+              className={inputClass}
+            />
+          </RuleField>
+          <RuleField label="克隆模板账号 ID" help="填中转站账号 ID，点击同步后读取组、代理等配置。">
+            <input
+              name="cloneAccountId"
+              defaultValue={autoRule.cloneAccountId ?? ""}
+              placeholder="中转站账号 ID / name / email"
+              className={inputClass}
+            />
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={(event) => {
+                if (event.currentTarget.form) void syncTemplate(event.currentTarget.form);
+              }}
+              className={clsx(secondaryButton, "mt-2 w-full")}
+            >
+              同步模板
+            </button>
+          </RuleField>
+          <RuleField label="推送备注" help="推送新账号时追加到备注，便于区分来源。">
+            <textarea
+              name="pushNotes"
+              defaultValue={autoRule.pushNotes ?? ""}
+              rows={4}
+              placeholder="例如：号池自动补号"
+              className={inputClass}
+            />
+            <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.025] px-3 py-2 text-[11px] leading-5 text-slate-500">
+              {templatePreview ? (
+                <>
+                  <p>模板: {templatePreview.accountId ?? "已读取"}</p>
+                  <p>分组: {templatePreview.groups?.length ? templatePreview.groups.join(" / ") : "未返回"}</p>
+                  <p>代理: {templatePreview.proxy ? "已返回" : "未返回"}</p>
+                </>
+              ) : (
+                "同步模板后会显示读取到的分组和代理信息。"
+              )}
+              {templateError ? <p className="text-rose-200">{templateError}</p> : null}
+            </div>
           </RuleField>
           <button disabled={isPending} className={clsx(primaryButton, "min-h-[84px]")}>
             保存自动补池规则
@@ -1234,7 +1335,13 @@ export default function DashboardClient({ data }: Props) {
       enabled: formData.get("enabled") === "on",
       triggerMode: String(formData.get("triggerMode") || "any"),
       credentialFilter: String(formData.get("credentialFilter") || "all"),
-      planFilter: String(formData.get("planFilter") || "all"),
+      planFilters: formData.getAll("planFilters").map((item) => String(item)),
+      targetGroups: String(formData.get("targetGroups") || "")
+        .split(/[\n,，]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+      cloneAccountId: String(formData.get("cloneAccountId") || ""),
+      pushNotes: String(formData.get("pushNotes") || ""),
       intervalMinutes: Number(formData.get("intervalMinutes") || 5),
       minUsableAccounts: Number(formData.get("minUsableAccounts") || 0),
       min5hRemainingPercent: Number(formData.get("min5hRemainingPercent") || 0),
@@ -2001,6 +2108,9 @@ export default function DashboardClient({ data }: Props) {
                               body: JSON.stringify({
                                 integrationId: integration.id,
                                 accountIds: selectedIds,
+                                targetGroups: autoRule?.targetGroups ?? [],
+                                cloneAccountId: autoRule?.cloneAccountId ?? "",
+                                pushNotes: autoRule?.pushNotes ?? "",
                               }),
                             }),
                           )
@@ -2952,7 +3062,7 @@ export default function DashboardClient({ data }: Props) {
                                 {" · "}
                                 {plan.autoRule ? credentialFilterLabels[plan.autoRule.credentialFilter] : "全部账号"}
                                 {" · "}
-                                {plan.autoRule ? planFilterLabels[plan.autoRule.planFilter] : "全部套餐"}
+                                {plan.autoRule ? formatPlanFilters(plan.autoRule.planFilters) : "全部套餐"}
                                 {plan.quotaCritical ? " · 额度耗尽保护" : ""}
                               </p>
                             </div>
@@ -2967,6 +3077,9 @@ export default function DashboardClient({ data }: Props) {
                                     body: JSON.stringify({
                                       integrationId: plan.integration.id,
                                       accountIds: selectedIds,
+                                      targetGroups: plan.autoRule?.targetGroups ?? [],
+                                      cloneAccountId: plan.autoRule?.cloneAccountId ?? "",
+                                      pushNotes: plan.autoRule?.pushNotes ?? "",
                                     }),
                                   }),
                                 )

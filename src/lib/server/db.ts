@@ -123,6 +123,10 @@ function getDb() {
       interval_minutes INTEGER NOT NULL,
       credential_filter TEXT NOT NULL,
       plan_filter TEXT NOT NULL DEFAULT 'all',
+      plan_filters_json TEXT NOT NULL DEFAULT '[]',
+      target_groups_json TEXT NOT NULL DEFAULT '[]',
+      clone_account_id TEXT,
+      push_notes TEXT,
       respect_rate_limit_recovery INTEGER NOT NULL DEFAULT 1,
       rate_limit_recovery_grace_minutes INTEGER NOT NULL,
       last_run_at TEXT,
@@ -183,6 +187,10 @@ function getDb() {
     "ALTER TABLE proxies ADD COLUMN last_test_ip TEXT",
     "ALTER TABLE proxies ADD COLUMN last_test_location TEXT",
     "ALTER TABLE auto_replenish_rules ADD COLUMN plan_filter TEXT NOT NULL DEFAULT 'all'",
+    "ALTER TABLE auto_replenish_rules ADD COLUMN plan_filters_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE auto_replenish_rules ADD COLUMN target_groups_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE auto_replenish_rules ADD COLUMN clone_account_id TEXT",
+    "ALTER TABLE auto_replenish_rules ADD COLUMN push_notes TEXT",
   ]) {
     try {
       db.exec(statement);
@@ -294,6 +302,18 @@ function mapLogRow(row: Record<string, unknown>): ActivityLogRecord {
 }
 
 function mapAutoReplenishRuleRow(row: Record<string, unknown>): AutoReplenishRuleRecord {
+  const targetGroupsPayload = parseJson(row.target_groups_json);
+  const targetGroups = Array.isArray(targetGroupsPayload)
+    ? targetGroupsPayload.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []))
+    : [];
+  const planFiltersPayload = parseJson(row.plan_filters_json);
+  const planFilters = Array.isArray(planFiltersPayload)
+    ? planFiltersPayload.flatMap((item) =>
+        item === "plus" || item === "free" || item === "pro" ? [item] : [],
+      )
+    : row.plan_filter === "plus" || row.plan_filter === "free" || row.plan_filter === "pro"
+      ? [row.plan_filter]
+      : [];
   return {
     id: String(row.id),
     integrationId: String(row.integration_id),
@@ -307,10 +327,16 @@ function mapAutoReplenishRuleRow(row: Record<string, unknown>): AutoReplenishRul
     intervalMinutes: Number(row.interval_minutes ?? 0),
     credentialFilter:
       row.credential_filter as AutoReplenishRuleRecord["credentialFilter"],
-    planFilter:
-      row.plan_filter === "plus" || row.plan_filter === "free" || row.plan_filter === "pro"
-        ? row.plan_filter
-        : "all",
+    planFilters,
+    targetGroups,
+    cloneAccountId:
+      typeof row.clone_account_id === "string" && row.clone_account_id.trim()
+        ? row.clone_account_id.trim()
+        : null,
+    pushNotes:
+      typeof row.push_notes === "string" && row.push_notes.trim()
+        ? row.push_notes.trim()
+        : null,
     respectRateLimitRecovery: toBool(row.respect_rate_limit_recovery),
     rateLimitRecoveryGraceMinutes: Number(
       row.rate_limit_recovery_grace_minutes ?? 0,
@@ -513,7 +539,10 @@ export function createDefaultAutoReplenishRule(
     maxAccountsPerRun: 3,
     intervalMinutes: 5,
     credentialFilter: "all",
-    planFilter: "all",
+    planFilters: [],
+    targetGroups: [],
+    cloneAccountId: null,
+    pushNotes: null,
     respectRateLimitRecovery: true,
     rateLimitRecoveryGraceMinutes: 30,
     lastRunAt: null,
@@ -1177,10 +1206,11 @@ export function upsertAutoReplenishRule(
     INSERT INTO auto_replenish_rules (
       id, integration_id, enabled, trigger_mode, min_usable_accounts,
       min_5h_remaining_percent, target_usable_accounts, quota_low_purchase_count,
-      max_accounts_per_run, interval_minutes, credential_filter, plan_filter,
+      max_accounts_per_run, interval_minutes, credential_filter, plan_filter, plan_filters_json,
+      target_groups_json, clone_account_id, push_notes,
       respect_rate_limit_recovery, rate_limit_recovery_grace_minutes,
       last_run_at, next_run_at, last_status, last_message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
     ON CONFLICT(integration_id) DO UPDATE SET
       enabled = excluded.enabled,
       trigger_mode = excluded.trigger_mode,
@@ -1192,6 +1222,10 @@ export function upsertAutoReplenishRule(
       interval_minutes = excluded.interval_minutes,
       credential_filter = excluded.credential_filter,
       plan_filter = excluded.plan_filter,
+      plan_filters_json = excluded.plan_filters_json,
+      target_groups_json = excluded.target_groups_json,
+      clone_account_id = excluded.clone_account_id,
+      push_notes = excluded.push_notes,
       respect_rate_limit_recovery = excluded.respect_rate_limit_recovery,
       rate_limit_recovery_grace_minutes = excluded.rate_limit_recovery_grace_minutes,
       next_run_at = excluded.next_run_at,
@@ -1208,7 +1242,11 @@ export function upsertAutoReplenishRule(
     input.maxAccountsPerRun,
     input.intervalMinutes,
     input.credentialFilter,
-    input.planFilter,
+    input.planFilters.length === 1 ? input.planFilters[0] : "all",
+    JSON.stringify(input.planFilters),
+    JSON.stringify(input.targetGroups),
+    normalizeNullable(input.cloneAccountId),
+    normalizeNullable(input.pushNotes),
     input.respectRateLimitRecovery ? 1 : 0,
     input.rateLimitRecoveryGraceMinutes,
     input.enabled

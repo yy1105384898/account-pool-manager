@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AccountRecord, IntegrationRecord } from "@/lib/types";
+import type { AccountRecord, IntegrationPushOptions, IntegrationRecord } from "@/lib/types";
 import { fetchJson } from "@/lib/server/connectors/shared";
 import {
   createDistribution,
@@ -45,7 +45,7 @@ type CodexProxyAdminAccount = {
   enabled?: boolean | null;
   locked?: boolean | null;
   at_only?: boolean | null;
-};
+} & Record<string, unknown>;
 
 type CodexProxyAdminAccountList = {
   accounts?: CodexProxyAdminAccount[];
@@ -62,7 +62,7 @@ type CodexProxyExportAccount = {
   expired?: string | null;
   codex_5h_used_percent?: number | string | null;
   codex_7d_used_percent?: number | string | null;
-};
+} & Record<string, unknown>;
 
 type RemoteAccount = {
   remoteId?: string | null;
@@ -120,6 +120,30 @@ function codexProxyExportAccountsFromPayload(payload: unknown) {
 
 function codexProxyAccountKey(value?: string | null) {
   return value?.trim().toLowerCase() || null;
+}
+
+function matchesTemplateId(record: Record<string, unknown>, target: string) {
+  const normalizedTarget = target.trim().toLowerCase();
+  return ["id", "name", "email", "account_id", "accountId"].some((key) => {
+    const value = record[key];
+    return (typeof value === "string" || typeof value === "number") &&
+      String(value).trim().toLowerCase() === normalizedTarget;
+  });
+}
+
+function readTemplateGroups(record: Record<string, unknown>) {
+  const value = record.groups ?? record.group_names ?? record.groupNames ?? record.group ?? record.group_name;
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function readTemplateProxy(record: Record<string, unknown>) {
+  return record.proxy ?? record.proxies ?? record.proxy_url ?? record.proxyUrl ?? null;
 }
 
 function codexProxyRemoteStatus(item: CodexProxyAdminAccount) {
@@ -266,8 +290,15 @@ export async function readCodexProxyStatus(integration: IntegrationRecord): Prom
 export async function pushToCodexProxy(
   integration: IntegrationRecord,
   accounts: AccountRecord[],
+  options?: IntegrationPushOptions,
 ) {
   let pushed = 0;
+  const template = options?.cloneAccountId?.trim()
+    ? await readCodexProxyAccountTemplate(integration, options.cloneAccountId)
+    : null;
+  const targetGroups = options?.targetGroups?.map((item) => item.trim()).filter(Boolean) ?? [];
+  const pushGroups = targetGroups.length ? targetGroups : template?.groups ?? [];
+  const templateProxy = typeof template?.proxy === "string" ? template.proxy : "";
 
   for (const item of accounts) {
     const refreshToken = resolveRefreshToken(item);
@@ -279,7 +310,11 @@ export async function pushToCodexProxy(
         body: {
           name,
           refresh_token: refreshToken,
-          proxy_url: "",
+          proxy_url: templateProxy,
+          group: pushGroups[0],
+          groups: pushGroups.length ? pushGroups : undefined,
+          group_name: pushGroups[0],
+          notes: options?.pushNotes?.trim() || undefined,
         },
       });
       pushed += 1;
@@ -296,7 +331,11 @@ export async function pushToCodexProxy(
       body: {
         name,
         access_token: accessToken,
-        proxy_url: "",
+        proxy_url: templateProxy,
+        group: pushGroups[0],
+        groups: pushGroups.length ? pushGroups : undefined,
+        group_name: pushGroups[0],
+        notes: options?.pushNotes?.trim() || undefined,
       },
     });
     pushed += 1;
@@ -305,6 +344,32 @@ export async function pushToCodexProxy(
   return {
     pushed,
     message: `已推送 ${pushed} 个账号到 codexproxy`,
+  };
+}
+
+export async function readCodexProxyAccountTemplate(
+  integration: IntegrationRecord,
+  accountId: string,
+) {
+  const [statusAccounts, exportAccounts] = await Promise.all([
+    loadCodexProxyAdminAccounts(integration).catch(() => []),
+    loadCodexProxyExportAccounts(integration).catch(() => []),
+  ]);
+  const matchedStatus = statusAccounts.find((item) => matchesTemplateId(item, accountId));
+  const matchedExport = exportAccounts.find((item) => matchesTemplateId(item, accountId));
+  const raw = {
+    ...(matchedExport ?? {}),
+    ...(matchedStatus ?? {}),
+  };
+
+  if (!matchedStatus && !matchedExport) return null;
+
+  return {
+    accountId: String(raw.id ?? raw.name ?? raw.account_id ?? accountId),
+    groups: readTemplateGroups(raw),
+    proxy: readTemplateProxy(raw),
+    notes: typeof raw.notes === "string" ? raw.notes : null,
+    raw,
   };
 }
 
@@ -358,7 +423,9 @@ export async function readCpaStatus(integration: IntegrationRecord): Promise<Rem
 export async function pushToCpa(
   integration: IntegrationRecord,
   accounts: AccountRecord[],
+  options?: IntegrationPushOptions,
 ) {
+  const targetGroups = options?.targetGroups?.map((item) => item.trim()).filter(Boolean) ?? [];
   const body = {
     accounts: accounts.map((item) => ({
       token: item.accessToken,
@@ -368,6 +435,9 @@ export async function pushToCpa(
       accountId: item.accountId ?? undefined,
       userId: item.userId ?? undefined,
       planType: item.planType ?? undefined,
+      group: targetGroups[0],
+      groups: targetGroups.length ? targetGroups : undefined,
+      notes: options?.pushNotes?.trim() || undefined,
     })),
   };
 

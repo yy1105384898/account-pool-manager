@@ -9,7 +9,7 @@ export const autoReplenishCredentialFilters = [
   "has_refresh_token",
   "access_only",
 ] as const;
-export const autoReplenishPlanFilters = ["all", "plus", "free", "pro"] as const;
+export const autoReplenishPlanFilters = ["plus", "free", "pro"] as const;
 export const autoReplenishRunStatuses = ["success", "error", "skipped"] as const;
 export const accountStatuses = [
   "active",
@@ -131,7 +131,10 @@ export type AutoReplenishRuleRecord = {
   maxAccountsPerRun: number;
   intervalMinutes: number;
   credentialFilter: AutoReplenishCredentialFilter;
-  planFilter: AutoReplenishPlanFilter;
+  planFilters: AutoReplenishPlanFilter[];
+  targetGroups: string[];
+  cloneAccountId: string | null;
+  pushNotes: string | null;
   respectRateLimitRecovery: boolean;
   rateLimitRecoveryGraceMinutes: number;
   lastRunAt: string | null;
@@ -150,6 +153,12 @@ export type AutoReplenishRunRecord = {
   message: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+};
+
+export type IntegrationPushOptions = {
+  targetGroups?: string[];
+  cloneAccountId?: string | null;
+  pushNotes?: string | null;
 };
 
 export type AccountViewModel = {
@@ -267,6 +276,9 @@ export const accountPatchSchema = z.object({
 export const pushRequestSchema = z.object({
   integrationId: z.string().trim().min(1),
   accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
+  targetGroups: z.array(z.string().trim().min(1)).optional(),
+  cloneAccountId: z.string().trim().max(120).optional().or(z.literal("")),
+  pushNotes: z.string().trim().max(500).optional().or(z.literal("")),
 });
 
 export const accountBulkDeleteSchema = z.object({
@@ -288,7 +300,10 @@ export const autoReplenishRuleSchema = z.object({
   maxAccountsPerRun: z.int().min(1).max(999).default(3),
   intervalMinutes: z.int().min(1).max(1440).default(5),
   credentialFilter: z.enum(autoReplenishCredentialFilters).default("all"),
-  planFilter: z.enum(autoReplenishPlanFilters).default("all"),
+  planFilters: z.array(z.enum(autoReplenishPlanFilters)).default([]),
+  targetGroups: z.array(z.string().trim().min(1).max(120)).default([]),
+  cloneAccountId: z.string().trim().max(120).optional().or(z.literal("")),
+  pushNotes: z.string().trim().max(500).optional().or(z.literal("")),
   respectRateLimitRecovery: z.boolean().default(true),
   rateLimitRecoveryGraceMinutes: z.int().min(0).max(1440).default(30),
 });

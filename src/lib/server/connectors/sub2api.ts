@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AccountRecord, IntegrationRecord } from "@/lib/types";
+import type { AccountRecord, IntegrationPushOptions, IntegrationRecord } from "@/lib/types";
 import { fetchJson } from "@/lib/server/connectors/shared";
 import {
   createDistribution,
@@ -58,6 +58,41 @@ function compact(record: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(record).filter(([, value]) => value !== undefined && value !== null && value !== ""),
   );
+}
+
+function readGroupList(record: Record<string, unknown>) {
+  const value = record.groups ?? record.group_names ?? record.groupNames ?? record.group ?? record.group_name;
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function applyPushOptions(
+  payload: Record<string, unknown>,
+  options?: IntegrationPushOptions,
+) {
+  const targetGroups = options?.targetGroups?.map((item) => item.trim()).filter(Boolean) ?? [];
+  const next = { ...payload };
+
+  if (targetGroups.length > 0) {
+    next.groups = targetGroups;
+    next.group_names = targetGroups;
+    next.group = targetGroups[0];
+    next.group_name = targetGroups[0];
+  }
+
+  if (options?.pushNotes?.trim()) {
+    const notes = [options.pushNotes.trim(), typeof next.notes === "string" ? next.notes : ""]
+      .filter(Boolean)
+      .join(" / ");
+    next.notes = notes;
+  }
+
+  return next;
 }
 
 async function loadStatuses(integration: IntegrationRecord) {
@@ -158,6 +193,38 @@ export async function importFromSub2Api(integration: IntegrationRecord) {
   });
 }
 
+export async function readSub2ApiAccountTemplate(
+  integration: IntegrationRecord,
+  accountId: string,
+) {
+  const query = new URLSearchParams({
+    platform: "openai",
+    type: "oauth",
+    include_proxies: "true",
+  });
+  const payload = await fetchJson<AdminDataPayload>(
+    integration,
+    `/api/v1/admin/accounts/data?${query.toString()}`,
+  );
+  const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  const target = accountId.trim();
+  const account = accounts.find((item) =>
+    item.name === target ||
+    readString(item.credentials ?? {}, "email") === target ||
+    readString(item.credentials ?? {}, "chatgpt_account_id") === target,
+  );
+
+  if (!account) return null;
+
+  return {
+    accountId: account.name ?? target,
+    groups: readGroupList(account),
+    proxy: account.proxy ?? account.proxies ?? account.proxy_url ?? account.proxyUrl ?? null,
+    notes: account.notes ?? null,
+    raw: account,
+  };
+}
+
 export async function readSub2ApiStatus(integration: IntegrationRecord): Promise<RemoteStatusSummary> {
   const started = Date.now();
   const query = new URLSearchParams({
@@ -214,15 +281,25 @@ export async function readSub2ApiStatus(integration: IntegrationRecord): Promise
 export async function pushToSub2Api(
   integration: IntegrationRecord,
   accounts: AccountRecord[],
+  options?: IntegrationPushOptions,
 ) {
+  let templateConfig: Record<string, unknown> = {};
+  if (options?.cloneAccountId?.trim()) {
+    const template = await readSub2ApiAccountTemplate(integration, options.cloneAccountId);
+    if (template?.raw && typeof template.raw === "object") {
+      templateConfig = template.raw as Record<string, unknown>;
+    }
+  }
+
   const accountPayloads = accounts.map((item) => {
     const storedConfig =
       item.metadata.sub2apiConfig && typeof item.metadata.sub2apiConfig === "object"
         ? (item.metadata.sub2apiConfig as Record<string, unknown>)
         : {};
+    const baseConfig = { ...storedConfig, ...templateConfig };
     const storedCredentials =
-      storedConfig.credentials && typeof storedConfig.credentials === "object"
-        ? (storedConfig.credentials as Record<string, unknown>)
+      baseConfig.credentials && typeof baseConfig.credentials === "object"
+        ? (baseConfig.credentials as Record<string, unknown>)
         : {};
     const credentials = compact({
       ...storedCredentials,
@@ -233,12 +310,12 @@ export async function pushToSub2Api(
       chatgpt_user_id: item.userId ?? storedCredentials.chatgpt_user_id,
       plan_type: item.planType ?? storedCredentials.plan_type,
     });
-    return compact({
-      ...storedConfig,
-      name: storedConfig.name ?? item.label ?? item.email ?? item.accountId ?? undefined,
-      notes: item.notes ?? storedConfig.notes,
-      platform: storedConfig.platform ?? "openai",
-      type: storedConfig.type ?? "oauth",
+    return applyPushOptions(compact({
+      ...baseConfig,
+      name: item.label ?? item.email ?? item.accountId ?? undefined,
+      notes: item.notes ?? baseConfig.notes,
+      platform: baseConfig.platform ?? "openai",
+      type: baseConfig.type ?? "oauth",
       credentials,
       access_token: credentials.access_token,
       refresh_token: credentials.refresh_token,
@@ -246,7 +323,7 @@ export async function pushToSub2Api(
       chatgpt_account_id: credentials.chatgpt_account_id,
       chatgpt_user_id: credentials.chatgpt_user_id,
       plan_type: credentials.plan_type,
-    });
+    }), options);
   });
 
   const body = {

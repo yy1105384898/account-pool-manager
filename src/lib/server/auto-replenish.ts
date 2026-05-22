@@ -61,7 +61,10 @@ function toRuleInput(rule: AutoReplenishRuleRecord): AutoReplenishRuleInput {
     maxAccountsPerRun: rule.maxAccountsPerRun,
     intervalMinutes: rule.intervalMinutes,
     credentialFilter: rule.credentialFilter,
-    planFilter: rule.planFilter,
+    planFilters: rule.planFilters,
+    targetGroups: rule.targetGroups,
+    cloneAccountId: rule.cloneAccountId ?? "",
+    pushNotes: rule.pushNotes ?? "",
     respectRateLimitRecovery: rule.respectRateLimitRecovery,
     rateLimitRecoveryGraceMinutes: rule.rateLimitRecoveryGraceMinutes,
   };
@@ -115,19 +118,20 @@ function normalizePlanFilter(value?: string | null): Exclude<AutoReplenishPlanFi
   return null;
 }
 
-function passesPlanFilter(account: AccountRecord, planFilter: AutoReplenishPlanFilter) {
-  if (planFilter === "all") return true;
-  return normalizePlanFilter(account.planType) === planFilter;
+function passesPlanFilter(account: AccountRecord, planFilters: AutoReplenishPlanFilter[]) {
+  if (planFilters.length === 0) return true;
+  const normalizedPlan = normalizePlanFilter(account.planType);
+  return normalizedPlan ? planFilters.includes(normalizedPlan) : false;
 }
 
 function buildCandidateFilterText(
   credentialFilter: AutoReplenishCredentialFilter,
-  planFilter: AutoReplenishPlanFilter,
+  planFilters: AutoReplenishPlanFilter[],
 ) {
   const chunks: string[] = [];
   if (credentialFilter === "has_refresh_token") chunks.push("仅 Refresh Token");
   if (credentialFilter === "access_only") chunks.push("仅 Access Token");
-  if (planFilter !== "all") chunks.push(`套餐 ${planFilter.toUpperCase()}`);
+  if (planFilters.length > 0) chunks.push(`套餐 ${planFilters.map((item) => item.toUpperCase()).join("/")}`);
   return chunks.length ? `（筛选：${chunks.join("，")}）` : "";
 }
 
@@ -140,7 +144,7 @@ function sortByIsoAsc(a: string | null, b: string | null) {
 function pickCandidateAccounts(
   integrationId: string,
   credentialFilter: AutoReplenishCredentialFilter,
-  planFilter: AutoReplenishPlanFilter,
+  planFilters: AutoReplenishPlanFilter[],
   count: number,
 ) {
   const pushStates = new Map(
@@ -157,7 +161,7 @@ function pickCandidateAccounts(
     .filter((account) => account.status === "active")
     .filter((account) => account.accessToken.trim())
     .filter((account) => passesCredentialFilter(account, credentialFilter))
-    .filter((account) => passesPlanFilter(account, planFilter));
+    .filter((account) => passesPlanFilter(account, planFilters));
 
   const untouched = eligible
     .filter((account) => !pushStates.has(account.id))
@@ -362,12 +366,12 @@ export async function runAutoReplenishForIntegration(
     const { selected, totalEligible } = pickCandidateAccounts(
       integrationId,
       rule.credentialFilter,
-      rule.planFilter,
+      rule.planFilters,
       desiredCount,
     );
 
     if (selected.length === 0) {
-      const filterText = buildCandidateFilterText(rule.credentialFilter, rule.planFilter);
+      const filterText = buildCandidateFilterText(rule.credentialFilter, rule.planFilters);
       const result: AutoReplenishRunResult = {
         integrationId,
         status: "error",
@@ -387,7 +391,12 @@ export async function runAutoReplenishForIntegration(
       throw new Error(result.message);
     }
 
-    const pushResult = await pushAccountsToIntegration(integration, selected);
+    const pushOptions = {
+      targetGroups: rule.targetGroups,
+      cloneAccountId: rule.cloneAccountId,
+      pushNotes: rule.pushNotes,
+    };
+    const pushResult = await pushAccountsToIntegration(integration, selected, pushOptions);
     markAccountsPushed(selected.map((item) => item.id));
     recordAccountsPushedToIntegration(
       integrationId,
