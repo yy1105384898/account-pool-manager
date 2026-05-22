@@ -800,6 +800,11 @@ export default function DashboardClient({ data }: Props) {
     setSelectedIds(accounts.map((item) => item.id));
   }
 
+  function clearVisibleSelection() {
+    const visibleIds = new Set(accounts.map((item) => item.id));
+    setSelectedIds((current) => current.filter((item) => !visibleIds.has(item)));
+  }
+
   function selectActiveVisible() {
     setSelectedIds(accounts.filter((item) => item.status === "active").map((item) => item.id));
   }
@@ -2418,7 +2423,18 @@ export default function DashboardClient({ data }: Props) {
                   <table className="min-w-full border-collapse text-left text-sm">
                     <thead className="sticky top-0 z-10 bg-cyan-950/95 font-mono text-[11px] uppercase tracking-[0.22em] text-cyan-100">
                       <tr>
-                        <th className="px-4 py-3">选</th>
+                        <th className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={accounts.length > 0 && accounts.every((item) => selectedIds.includes(item.id))}
+                            onChange={(event) => {
+                              if (event.target.checked) selectAllVisible();
+                              else clearVisibleSelection();
+                            }}
+                            aria-label="全选当前列表"
+                            className="h-4 w-4 rounded border-cyan-200/30 bg-slate-950/70 accent-cyan-300"
+                          />
+                        </th>
                         <th className="px-4 py-3">标签 / 邮箱</th>
                         <th className="px-4 py-3">来源</th>
                         <th className="px-4 py-3">计划</th>
