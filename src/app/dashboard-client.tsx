@@ -1302,76 +1302,78 @@ export default function DashboardClient({ data }: Props) {
     <div className="cyber-shell min-h-screen text-slate-100">
       <div className="min-h-screen w-full lg:pl-[260px]">
         <nav className="command-bar z-30 flex flex-col gap-5 rounded-none border-x-0 border-t-0 px-4 py-5 text-sm text-slate-200 lg:fixed lg:inset-y-0 lg:left-0 lg:h-auto lg:w-[260px] lg:overflow-y-auto lg:border-b-0 lg:border-r lg:border-cyan-200/14">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/15 text-cyan-100 shadow-[0_0_28px_rgba(34,211,238,0.20)]">
-              <Cpu className="h-5 w-5" />
+          <div className="flex flex-col gap-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/15 text-cyan-100 shadow-[0_0_28px_rgba(34,211,238,0.20)]">
+                <Cpu className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-cyan-100/70">
+                  NexusPool
+                </p>
+                <p className="text-sm font-medium text-white">号池管理系统</p>
+              </div>
             </div>
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-cyan-100/70">
-                NexusPool
+
+            <div className="grid gap-2">
+              {workspaceNavItems.map(({ view, label, icon: Icon, meta }) => {
+                const active = activeView === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => changeWorkspaceView(view)}
+                    className={clsx(
+                      "group flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition",
+                      active
+                        ? "border-cyan-200/35 bg-cyan-300/14 text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.13)]"
+                        : "border-transparent text-slate-300 hover:border-cyan-200/18 hover:bg-cyan-300/10 hover:text-cyan-50",
+                    )}
+                  >
+                    <span className="flex items-center gap-3">
+                      <Icon
+                        className={clsx(
+                          "h-4 w-4 transition",
+                          active ? "text-cyan-100" : "text-cyan-200/70 group-hover:text-cyan-100",
+                        )}
+                      />
+                      <span>{label}</span>
+                    </span>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                      {meta}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="min-h-[116px] rounded-[1.35rem] border border-cyan-200/14 bg-slate-950/34 p-3 text-xs">
+              <p className="font-mono uppercase tracking-[0.24em] text-cyan-200/60">
+                当前页面
               </p>
-              <p className="text-sm font-medium text-white">号池管理系统</p>
+              <p className="mt-2 text-sm font-medium text-white">{activeViewMeta.title}</p>
+              <p className="mt-2 line-clamp-3 leading-5 text-slate-400">{activeViewMeta.description}</p>
+            </div>
+
+            <div className="rounded-[1.35rem] border border-cyan-200/14 bg-slate-950/34 p-3 text-xs">
+              <p className="font-mono uppercase tracking-[0.24em] text-cyan-200/60">
+                补号流程
+              </p>
+              <div className="mt-3 grid gap-2">
+                {["导入账号入池", "检测中转状态", "选择可用账号", "推送补充中转"].map((item, index) => (
+                  <div key={item} className="flex items-center gap-2 rounded-xl bg-white/[0.035] px-3 py-2 text-slate-300">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/10 font-mono text-[10px] text-cyan-100">
+                      {index + 1}
+                    </span>
+                    {item}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="grid gap-2">
-            {workspaceNavItems.map(({ view, label, icon: Icon, meta }) => {
-              const active = activeView === view;
-              return (
-                <button
-                  key={view}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => changeWorkspaceView(view)}
-                  className={clsx(
-                    "group flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition",
-                    active
-                      ? "border-cyan-200/35 bg-cyan-300/14 text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.13)]"
-                      : "border-transparent text-slate-300 hover:border-cyan-200/18 hover:bg-cyan-300/10 hover:text-cyan-50",
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <Icon
-                      className={clsx(
-                        "h-4 w-4 transition",
-                        active ? "text-cyan-100" : "text-cyan-200/70 group-hover:text-cyan-100",
-                      )}
-                    />
-                    <span>{label}</span>
-                  </span>
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                    {meta}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="rounded-[1.35rem] border border-cyan-200/14 bg-slate-950/34 p-3 text-xs">
-            <p className="font-mono uppercase tracking-[0.24em] text-cyan-200/60">
-              当前页面
-            </p>
-            <p className="mt-2 text-sm font-medium text-white">{activeViewMeta.title}</p>
-            <p className="mt-2 leading-5 text-slate-400">{activeViewMeta.description}</p>
-          </div>
-
-          <div className="rounded-[1.35rem] border border-cyan-200/14 bg-slate-950/34 p-3 text-xs">
-            <p className="font-mono uppercase tracking-[0.24em] text-cyan-200/60">
-              补号流程
-            </p>
-            <div className="mt-3 grid gap-2">
-              {["导入账号入池", "检测中转状态", "选择可用账号", "推送补充中转"].map((item, index) => (
-                <div key={item} className="flex items-center gap-2 rounded-xl bg-white/[0.035] px-3 py-2 text-slate-300">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/10 font-mono text-[10px] text-cyan-100">
-                    {index + 1}
-                  </span>
-                  {item}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-2 text-xs">
+          <div className="mt-auto grid gap-2 text-xs">
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-cyan-100">
               <Network className="h-3.5 w-3.5" /> {data.summary.totalAccounts} 个账号
             </span>
