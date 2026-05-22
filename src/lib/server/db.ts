@@ -407,9 +407,14 @@ function toIntegrationView(record: IntegrationRecord): IntegrationViewModel {
   };
 }
 
-function toAccountView(record: AccountRecord): AccountViewModel {
+function toAccountView(
+  record: AccountRecord,
+  pushSummary?: { pushCount: number; lastPushedAt: string | null },
+): AccountViewModel {
   const quota5h = typeof record.metadata.quota5hUsedPercent === "number" ? record.metadata.quota5hUsedPercent : null;
   const quota7d = typeof record.metadata.quota7dUsedPercent === "number" ? record.metadata.quota7dUsedPercent : null;
+  const metadataPushCount =
+    typeof record.metadata.pushCount === "number" ? record.metadata.pushCount : null;
   return {
     id: record.id,
     sourceType: record.sourceType,
@@ -434,10 +439,10 @@ function toAccountView(record: AccountRecord): AccountViewModel {
     lastCheckMessage: typeof record.metadata.lastCheckMessage === "string" ? record.metadata.lastCheckMessage : null,
     lastCheckLatencyMs: typeof record.metadata.lastCheckLatencyMs === "number" ? record.metadata.lastCheckLatencyMs : null,
     modelCount: typeof record.metadata.modelCount === "number" ? record.metadata.modelCount : null,
-    pushCount: typeof record.metadata.pushCount === "number" ? record.metadata.pushCount : null,
+    pushCount: pushSummary?.pushCount ?? metadataPushCount,
     lastImportedAt: record.lastImportedAt,
     lastStatusCheckedAt: record.lastStatusCheckedAt,
-    lastPushedAt: record.lastPushedAt,
+    lastPushedAt: pushSummary?.lastPushedAt ?? record.lastPushedAt,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
@@ -719,6 +724,28 @@ export function listPushedAccountStatesByIntegration(integrationId: string) {
       WHERE integration_id = ?
     `)
     .all(integrationId) as Array<Record<string, unknown>>;
+}
+
+function listAccountPushSummaries() {
+  const db = getDb();
+  const rows = db
+    .prepare(`
+      SELECT account_id, SUM(push_count) AS push_count, MAX(last_pushed_at) AS last_pushed_at
+      FROM account_integration_pushes
+      GROUP BY account_id
+    `)
+    .all() as Array<Record<string, unknown>>;
+
+  return new Map(
+    rows.map((row) => [
+      String(row.account_id),
+      {
+        pushCount: Number(row.push_count ?? 0),
+        lastPushedAt:
+          typeof row.last_pushed_at === "string" ? row.last_pushed_at : null,
+      },
+    ]),
+  );
 }
 
 export function createIntegration(input: IntegrationInput) {
@@ -1309,6 +1336,7 @@ export function addActivityLog(
 export function getDashboardData(): DashboardData {
   const integrations = listIntegrations();
   const accounts = listAccounts();
+  const pushSummaries = listAccountPushSummaries();
   const logs = listActivityLogs(100);
   const proxies = listProxies();
   const storedRules = new Map(
@@ -1323,7 +1351,9 @@ export function getDashboardData(): DashboardData {
 
   return {
     summary: buildSummary(accounts, integrations),
-    accounts: accounts.map(toAccountView),
+    accounts: accounts.map((account) =>
+      toAccountView(account, pushSummaries.get(account.id)),
+    ),
     integrations: integrations.map(toIntegrationView),
     logs,
     proxies,

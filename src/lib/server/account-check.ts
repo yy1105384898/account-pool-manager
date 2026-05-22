@@ -288,9 +288,7 @@ function normalizePlanType(value: string | null) {
 
 function buildMessage(snapshot: AccountSnapshot, latencyMs: number) {
   const plan = normalizePlanType(snapshot.planType) ?? "未返回";
-  const quota5h = snapshot.quota5hUsedPercent === null ? "未返回" : `${snapshot.quota5hUsedPercent}%`;
-  const quota7d = snapshot.quota7dUsedPercent === null ? "未返回" : `${snapshot.quota7dUsedPercent}%`;
-  return `套餐 ${plan}，5h ${quota5h}，7d ${quota7d}，延迟 ${latencyMs}ms`;
+  return `套餐 ${plan}，状态可用，延迟 ${latencyMs}ms`;
 }
 
 function buildSnapshotMetadata(snapshot: AccountSnapshot, message: string, latencyMs: number) {

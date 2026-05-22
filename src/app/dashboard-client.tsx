@@ -2585,7 +2585,6 @@ export default function DashboardClient({ data }: Props) {
                         <th className="px-4 py-3">来源</th>
                         <th className="px-4 py-3">计划</th>
                         <th className="px-4 py-3">状态</th>
-                        <th className="px-4 py-3">用量</th>
                         <th className="px-4 py-3">标识</th>
                         <th className="px-4 py-3">检测 / 推送</th>
                         <th className="px-4 py-3">操作</th>
@@ -2594,7 +2593,7 @@ export default function DashboardClient({ data }: Props) {
                     <tbody>
                       {accounts.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="px-4 py-12 text-center text-sm text-slate-500">
+                          <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-500">
                             没有匹配账号。
                           </td>
                         </tr>
@@ -2657,28 +2656,24 @@ export default function DashboardClient({ data }: Props) {
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
-                              <div className="space-y-2 text-xs text-slate-300">
-                                <p>5h {formatPercent(account.quota5hUsedPercent)}</p>
-                                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/10">
-                                  <div className="h-full rounded-full bg-rose-400" style={{ width: `${account.quota5hUsedPercent ?? 0}%` }} />
-                                </div>
-                                <p>7d {formatPercent(account.quota7dUsedPercent)}</p>
-                                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-white/10">
-                                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${account.quota7dUsedPercent ?? 0}%` }} />
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top">
                               <div className="space-y-1 font-mono text-xs text-slate-400">
                                 <p>acc: {maskIdentifier(account.accountId)}</p>
                                 <p>user: {maskIdentifier(account.userId)}</p>
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">
-                              <div className="space-y-1 text-xs text-slate-500">
+                              <div className="space-y-2 text-xs text-slate-500">
                                 <p>检测: {formatTime(account.lastStatusCheckedAt)}</p>
-                                <p>推送: {account.pushCount ?? 0} 次</p>
-                                <p>最后推送: {formatTime(account.lastPushedAt)}</p>
+                                {(account.pushCount ?? 0) > 0 ? (
+                                  <div className="inline-flex flex-col gap-1 rounded-2xl border border-amber-300/35 bg-amber-400/14 px-3 py-2 text-amber-100 shadow-[0_0_24px_rgba(251,191,36,0.10)]">
+                                    <span className="font-semibold">已推送 {account.pushCount} 次</span>
+                                    <span className="text-[11px] text-amber-100/70">最后 {formatTime(account.lastPushedAt)}</span>
+                                  </div>
+                                ) : (
+                                  <span className="inline-flex rounded-full border border-slate-300/15 bg-slate-400/10 px-2.5 py-1 text-slate-400">
+                                    未推送
+                                  </span>
+                                )}
                                 {account.lastCheckMessage ? (
                                   <p className="max-w-[220px] text-cyan-100">
                                     检测: {maskSensitiveText(account.lastCheckMessage)}
