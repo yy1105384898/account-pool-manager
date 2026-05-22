@@ -170,6 +170,14 @@ function buildTriggerText(
   return chunks.join("，");
 }
 
+function buildRecoverySkipMessage(
+  rule: AutoReplenishRuleRecord,
+  summary: RemoteStatusSummary,
+  quotaRemaining: number | null,
+) {
+  return `已刷新 ${summary.platform} 状态 ${summary.updatedAt}，5h 剩余 ${formatPercent(quotaRemaining)} 低于阈值，但正常账号 ${summary.normalAccounts} 个仍满足最低 ${rule.minUsableAccounts} 个；判断其它账号足够撑到额度恢复，本次不补号`;
+}
+
 async function persistRunOutcome(
   rule: AutoReplenishRuleRecord,
   startedAt: string,
@@ -262,43 +270,36 @@ export async function runAutoReplenishForIntegration(
       return result;
     }
 
-    if (
-      !normalLow &&
-      quotaLow &&
-      rule.respectRateLimitRecovery &&
-      rule.lastRunAt
-    ) {
-      const lastRunMs = Date.parse(rule.lastRunAt);
-      const recoverAtMs =
-        lastRunMs + rule.rateLimitRecoveryGraceMinutes * 60_000;
-      if (Number.isFinite(lastRunMs) && recoverAtMs > Date.now()) {
-        const leftMinutes = Math.ceil((recoverAtMs - Date.now()) / 60_000);
-        const result: AutoReplenishRunResult = {
-          integrationId,
-          status: "skipped",
-          message: `已达到额度补号阈值，但仍在恢复等待期，还需约 ${leftMinutes} 分钟`,
-          pushed: 0,
-          summary,
-          selectedAccountIds: [],
-        };
-        await persistRunOutcome(rule, startedAt, triggerSource, result);
-        if (triggerSource === "manual") {
-          addActivityLog(
-            "auto_replenish_run",
-            "info",
-            "自动补号已跳过",
-            result.message,
-            { integrationId, status: result.status },
-          );
-        }
-        return result;
+    if (!normalLow && quotaLow && rule.respectRateLimitRecovery) {
+      const result: AutoReplenishRunResult = {
+        integrationId,
+        status: "skipped",
+        message: buildRecoverySkipMessage(rule, summary, quotaRemaining),
+        pushed: 0,
+        summary,
+        selectedAccountIds: [],
+      };
+      await persistRunOutcome(rule, startedAt, triggerSource, result);
+      if (triggerSource === "manual") {
+        addActivityLog(
+          "auto_replenish_run",
+          "info",
+          "自动补号已跳过",
+          result.message,
+          { integrationId, status: result.status },
+        );
       }
+      updateIntegrationHealth(integrationId, "success", result.message);
+      return result;
     }
 
     const desiredByNormal = normalLow
       ? Math.max(rule.targetUsableAccounts - summary.normalAccounts, 0)
       : 0;
-    const desiredByQuota = quotaLow ? rule.quotaLowPurchaseCount : 0;
+    const desiredByQuota =
+      quotaLow && (!rule.respectRateLimitRecovery || normalLow)
+        ? rule.quotaLowPurchaseCount
+        : 0;
     const desiredCount = Math.min(
       Math.max(desiredByNormal, desiredByQuota, 0),
       rule.maxAccountsPerRun,

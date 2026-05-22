@@ -563,7 +563,7 @@ function AutoReplenishPanel({
               className={inputClass}
             />
           </RuleField>
-          <RuleField label="额度低时等待恢复" help="先等恢复窗口再补号。">
+          <RuleField label="额度低时等待恢复" help="正常账号仍够用时不补，等额度自然恢复。">
             <input
               type="checkbox"
               name="respectRateLimitRecovery"
@@ -571,7 +571,7 @@ function AutoReplenishPanel({
               className="h-4 w-4 accent-cyan-300"
             />
           </RuleField>
-          <RuleField label="恢复等待（分钟）" help="等待后再次判断额度。">
+          <RuleField label="恢复等待（分钟）" help="保留为恢复策略参数；系统会优先判断现有账号是否够用。">
             <input
               type="number"
               min={0}
