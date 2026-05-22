@@ -196,6 +196,12 @@ function isWorkspaceView(value: string): value is WorkspaceView {
   return workspaceNavItems.some((item) => item.view === value);
 }
 
+function getWorkspaceViewFromHash(): WorkspaceView {
+  if (typeof window === "undefined") return "overview";
+  const hashView = window.location.hash.replace("#", "");
+  return isWorkspaceView(hashView) ? hashView : "overview";
+}
+
 const integrationFormConfig: Record<
   IntegrationType,
   {
@@ -771,13 +777,17 @@ export default function DashboardClient({ data }: Props) {
     (total, item) => total + item.recommendedPushCount,
     0,
   );
-  const [activeView, setActiveView] = useState<WorkspaceView>("overview");
+  const [activeView, setActiveView] = useState<WorkspaceView>(() => getWorkspaceViewFromHash());
+  const activeViewRef = useRef<WorkspaceView>(activeView);
   const activeViewMeta = workspaceViewMeta[activeView];
 
   useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  useEffect(() => {
     function syncFromHash() {
-      const hashView = window.location.hash.replace("#", "");
-      if (isWorkspaceView(hashView)) setActiveView(hashView);
+      setActiveView(getWorkspaceViewFromHash());
     }
 
     syncFromHash();
@@ -825,6 +835,7 @@ export default function DashboardClient({ data }: Props) {
 
   function runTask(task: () => Promise<{ ok: boolean; error?: string; message?: string }>) {
     startTransition(async () => {
+      const viewBeforeTask = activeViewRef.current;
       setNotice(null);
       const result = await task();
       setNotice(
@@ -832,6 +843,11 @@ export default function DashboardClient({ data }: Props) {
           ? { type: "success", text: result.message ?? "操作成功" }
           : { type: "error", text: result.error ?? "操作失败" },
       );
+      if (typeof window !== "undefined") {
+        const hash = `#${viewBeforeTask}`;
+        if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
+      }
+      setActiveView(viewBeforeTask);
       router.refresh();
     });
   }
