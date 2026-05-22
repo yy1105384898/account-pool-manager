@@ -456,7 +456,7 @@ function AutoReplenishPanel({
           >
             {translateAutoRunStatus(autoRule.lastStatus)}
           </span>
-          <span>触发: {autoRule.triggerMode === "all" ? "全部满足" : "任一触发"}</span>
+          <span>触发: {autoRule.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}</span>
           <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
           <span>目标 {autoRule.targetUsableAccounts}</span>
           <span>单次上限 {autoRule.maxAccountsPerRun}</span>
@@ -483,11 +483,14 @@ function AutoReplenishPanel({
               className="h-4 w-4 accent-cyan-300"
             />
           </RuleField>
-          <RuleField label="触发方式" help="任一触发更灵敏；全部满足更保守。">
+          <RuleField label="触发条件" help="判断远端中转站是否需要补号。">
             <select name="triggerMode" defaultValue={autoRule.triggerMode} className={inputClass}>
-              <option value="any">任一触发</option>
-              <option value="all">全部满足</option>
+              <option value="any">缺号或额度低就补</option>
+              <option value="all">缺号且额度低才补</option>
             </select>
+            <p className="mt-2 text-[11px] leading-5 text-slate-500">
+              缺号：正常账号数低于阈值；额度低：5h 剩余额度低于阈值。
+            </p>
           </RuleField>
           <RuleField label="可用账号范围" help="选择哪类账号推送。">
             <select
