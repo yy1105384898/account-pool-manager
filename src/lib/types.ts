@@ -10,6 +10,7 @@ export const autoReplenishCredentialFilters = [
   "access_only",
 ] as const;
 export const autoReplenishPlanFilters = ["plus", "free", "pro"] as const;
+export const pushPlanGroupKeys = ["plus", "free", "pro", "default"] as const;
 export const autoReplenishRunStatuses = ["success", "error", "skipped"] as const;
 export const accountStatuses = [
   "active",
@@ -32,7 +33,9 @@ export type AutoReplenishTriggerMode =
 export type AutoReplenishCredentialFilter =
   (typeof autoReplenishCredentialFilters)[number];
 export type AutoReplenishPlanFilter = (typeof autoReplenishPlanFilters)[number];
+export type PushPlanGroupKey = (typeof pushPlanGroupKeys)[number];
 export type AutoReplenishRunStatus = (typeof autoReplenishRunStatuses)[number];
+export type PlanGroupMap = Record<PushPlanGroupKey, string[]>;
 
 export type RemoteStatusSummary = {
   platform: string;
@@ -133,6 +136,7 @@ export type AutoReplenishRuleRecord = {
   credentialFilter: AutoReplenishCredentialFilter;
   planFilters: AutoReplenishPlanFilter[];
   targetGroups: string[];
+  planGroupMap: PlanGroupMap;
   cloneAccountId: string | null;
   pushNotes: string | null;
   respectRateLimitRecovery: boolean;
@@ -157,6 +161,7 @@ export type AutoReplenishRunRecord = {
 
 export type IntegrationPushOptions = {
   targetGroups?: string[];
+  planGroupMap?: Partial<PlanGroupMap>;
   cloneAccountId?: string | null;
   pushNotes?: string | null;
 };
@@ -227,6 +232,22 @@ const trimmedOptional = z
     return value;
   });
 
+const groupListSchema = z.array(z.string().trim().min(1).max(120)).default([]);
+
+const planGroupMapSchema = z
+  .object({
+    plus: groupListSchema,
+    free: groupListSchema,
+    pro: groupListSchema,
+    default: groupListSchema,
+  })
+  .default({
+    plus: [],
+    free: [],
+    pro: [],
+    default: [],
+  });
+
 export const integrationInputSchema = z.object({
   name: z.string().trim().min(1, "名称不能为空").max(80, "名称过长"),
   type: z.enum(integrationTypes),
@@ -277,6 +298,7 @@ export const pushRequestSchema = z.object({
   integrationId: z.string().trim().min(1),
   accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
   targetGroups: z.array(z.string().trim().min(1)).optional(),
+  planGroupMap: planGroupMapSchema.optional(),
   cloneAccountId: z.string().trim().max(120).optional().or(z.literal("")),
   pushNotes: z.string().trim().max(500).optional().or(z.literal("")),
 });
@@ -302,6 +324,7 @@ export const autoReplenishRuleSchema = z.object({
   credentialFilter: z.enum(autoReplenishCredentialFilters).default("all"),
   planFilters: z.array(z.enum(autoReplenishPlanFilters)).default([]),
   targetGroups: z.array(z.string().trim().min(1).max(120)).default([]),
+  planGroupMap: planGroupMapSchema,
   cloneAccountId: z.string().trim().max(120).optional().or(z.literal("")),
   pushNotes: z.string().trim().max(500).optional().or(z.literal("")),
   respectRateLimitRecovery: z.boolean().default(true),

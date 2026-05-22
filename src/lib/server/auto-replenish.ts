@@ -63,6 +63,7 @@ function toRuleInput(rule: AutoReplenishRuleRecord): AutoReplenishRuleInput {
     credentialFilter: rule.credentialFilter,
     planFilters: rule.planFilters,
     targetGroups: rule.targetGroups,
+    planGroupMap: rule.planGroupMap,
     cloneAccountId: rule.cloneAccountId ?? "",
     pushNotes: rule.pushNotes ?? "",
     respectRateLimitRecovery: rule.respectRateLimitRecovery,
@@ -393,6 +394,7 @@ export async function runAutoReplenishForIntegration(
 
     const pushOptions = {
       targetGroups: rule.targetGroups,
+      planGroupMap: rule.planGroupMap,
       cloneAccountId: rule.cloneAccountId,
       pushNotes: rule.pushNotes,
     };

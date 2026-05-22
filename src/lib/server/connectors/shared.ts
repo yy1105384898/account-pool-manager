@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { IntegrationRecord } from "@/lib/types";
+import type { AccountRecord, IntegrationPushOptions, IntegrationRecord, PlanGroupMap } from "@/lib/types";
 
 type FetchOptions = {
   method?: "GET" | "POST";
@@ -47,6 +47,45 @@ export function buildUrl(baseUrl: string, path: string, query?: URLSearchParams)
   const url = new URL(`${normalizedBase}${normalizedPath}`);
   if (query) url.search = query.toString();
   return url.toString();
+}
+
+export function cleanGroupList(groups?: string[] | null) {
+  return groups?.map((item) => item.trim()).filter(Boolean) ?? [];
+}
+
+function normalizePlanKey(value?: string | null) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return "default" as const;
+  if (normalized.includes("plus")) return "plus" as const;
+  if (normalized.includes("pro")) return "pro" as const;
+  if (normalized.includes("free")) return "free" as const;
+  return "default" as const;
+}
+
+function hasPlanGroups(planGroupMap?: Partial<PlanGroupMap> | null) {
+  if (!planGroupMap) return false;
+  return ["plus", "free", "pro", "default"].some((key) =>
+    cleanGroupList(planGroupMap[key as keyof PlanGroupMap]).length > 0,
+  );
+}
+
+export function resolveAccountPushGroups(
+  account: AccountRecord,
+  options?: IntegrationPushOptions,
+  fallbackGroups: string[] = [],
+) {
+  const planGroupMap = options?.planGroupMap;
+  if (hasPlanGroups(planGroupMap)) {
+    const planKey = normalizePlanKey(account.planType);
+    const routedGroups = cleanGroupList(planGroupMap?.[planKey]);
+    if (routedGroups.length > 0) return routedGroups;
+
+    const defaultGroups = cleanGroupList(planGroupMap?.default);
+    if (defaultGroups.length > 0) return defaultGroups;
+  }
+
+  const targetGroups = cleanGroupList(options?.targetGroups);
+  return targetGroups.length > 0 ? targetGroups : cleanGroupList(fallbackGroups);
 }
 
 export async function fetchJson<T>(

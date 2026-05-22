@@ -19,6 +19,7 @@ import type {
   IntegrationRecord,
   IntegrationViewModel,
   ManualAccountInput,
+  PlanGroupMap,
   ProxyInput,
   ProxyRecord,
   RemoteStatusSummary,
@@ -125,6 +126,7 @@ function getDb() {
       plan_filter TEXT NOT NULL DEFAULT 'all',
       plan_filters_json TEXT NOT NULL DEFAULT '[]',
       target_groups_json TEXT NOT NULL DEFAULT '[]',
+      plan_group_map_json TEXT NOT NULL DEFAULT '{}',
       clone_account_id TEXT,
       push_notes TEXT,
       respect_rate_limit_recovery INTEGER NOT NULL DEFAULT 1,
@@ -189,6 +191,7 @@ function getDb() {
     "ALTER TABLE auto_replenish_rules ADD COLUMN plan_filter TEXT NOT NULL DEFAULT 'all'",
     "ALTER TABLE auto_replenish_rules ADD COLUMN plan_filters_json TEXT NOT NULL DEFAULT '[]'",
     "ALTER TABLE auto_replenish_rules ADD COLUMN target_groups_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE auto_replenish_rules ADD COLUMN plan_group_map_json TEXT NOT NULL DEFAULT '{}'",
     "ALTER TABLE auto_replenish_rules ADD COLUMN clone_account_id TEXT",
     "ALTER TABLE auto_replenish_rules ADD COLUMN push_notes TEXT",
   ]) {
@@ -218,6 +221,32 @@ function parseJson(value: unknown) {
   } catch {
     return {};
   }
+}
+
+function parseStringList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(/[\n,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function parsePlanGroupMap(value: unknown): PlanGroupMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { plus: [], free: [], pro: [], default: [] };
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    plus: parseStringList(record.plus),
+    free: parseStringList(record.free),
+    pro: parseStringList(record.pro),
+    default: parseStringList(record.default),
+  };
 }
 
 function mapIntegrationRow(row: Record<string, unknown>): IntegrationRecord {
@@ -303,9 +332,7 @@ function mapLogRow(row: Record<string, unknown>): ActivityLogRecord {
 
 function mapAutoReplenishRuleRow(row: Record<string, unknown>): AutoReplenishRuleRecord {
   const targetGroupsPayload = parseJson(row.target_groups_json);
-  const targetGroups = Array.isArray(targetGroupsPayload)
-    ? targetGroupsPayload.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []))
-    : [];
+  const targetGroups = parseStringList(targetGroupsPayload);
   const planFiltersPayload = parseJson(row.plan_filters_json);
   const planFilters = Array.isArray(planFiltersPayload)
     ? planFiltersPayload.flatMap((item) =>
@@ -329,6 +356,7 @@ function mapAutoReplenishRuleRow(row: Record<string, unknown>): AutoReplenishRul
       row.credential_filter as AutoReplenishRuleRecord["credentialFilter"],
     planFilters,
     targetGroups,
+    planGroupMap: parsePlanGroupMap(parseJson(row.plan_group_map_json)),
     cloneAccountId:
       typeof row.clone_account_id === "string" && row.clone_account_id.trim()
         ? row.clone_account_id.trim()
@@ -541,6 +569,7 @@ export function createDefaultAutoReplenishRule(
     credentialFilter: "all",
     planFilters: [],
     targetGroups: [],
+    planGroupMap: { plus: [], free: [], pro: [], default: [] },
     cloneAccountId: null,
     pushNotes: null,
     respectRateLimitRecovery: true,
@@ -1207,10 +1236,10 @@ export function upsertAutoReplenishRule(
       id, integration_id, enabled, trigger_mode, min_usable_accounts,
       min_5h_remaining_percent, target_usable_accounts, quota_low_purchase_count,
       max_accounts_per_run, interval_minutes, credential_filter, plan_filter, plan_filters_json,
-      target_groups_json, clone_account_id, push_notes,
+      target_groups_json, plan_group_map_json, clone_account_id, push_notes,
       respect_rate_limit_recovery, rate_limit_recovery_grace_minutes,
       last_run_at, next_run_at, last_status, last_message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
     ON CONFLICT(integration_id) DO UPDATE SET
       enabled = excluded.enabled,
       trigger_mode = excluded.trigger_mode,
@@ -1224,6 +1253,7 @@ export function upsertAutoReplenishRule(
       plan_filter = excluded.plan_filter,
       plan_filters_json = excluded.plan_filters_json,
       target_groups_json = excluded.target_groups_json,
+      plan_group_map_json = excluded.plan_group_map_json,
       clone_account_id = excluded.clone_account_id,
       push_notes = excluded.push_notes,
       respect_rate_limit_recovery = excluded.respect_rate_limit_recovery,
@@ -1245,6 +1275,7 @@ export function upsertAutoReplenishRule(
     input.planFilters.length === 1 ? input.planFilters[0] : "all",
     JSON.stringify(input.planFilters),
     JSON.stringify(input.targetGroups),
+    JSON.stringify(input.planGroupMap),
     normalizeNullable(input.cloneAccountId),
     normalizeNullable(input.pushNotes),
     input.respectRateLimitRecovery ? 1 : 0,

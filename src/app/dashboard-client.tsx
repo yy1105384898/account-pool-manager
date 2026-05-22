@@ -35,6 +35,7 @@ import type {
   DashboardData,
   IntegrationType,
   IntegrationViewModel,
+  PlanGroupMap,
   RemoteStatusSummary,
 } from "@/lib/types";
 
@@ -151,10 +152,47 @@ const planFilterLabels: Record<AutoReplenishRuleRecord["planFilters"][number], s
   pro: "Pro",
 };
 
+const planGroupKeys = ["plus", "free", "pro", "default"] as const;
+type PlanGroupKey = (typeof planGroupKeys)[number];
+
+const planGroupLabels: Record<PlanGroupKey, string> = {
+  plus: "Plus 组",
+  free: "Free 组",
+  pro: "Pro 组",
+  default: "默认组",
+};
+
 function formatPlanFilters(planFilters: AutoReplenishRuleRecord["planFilters"]) {
   return planFilters.length
     ? planFilters.map((item) => planFilterLabels[item]).join(" / ")
     : "全部套餐";
+}
+
+function parseGroupText(value: FormDataEntryValue | null) {
+  return String(value || "")
+    .split(/[\n,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatGroupText(groups?: string[]) {
+  return groups?.join("\n") ?? "";
+}
+
+function hasPlanGroupMap(planGroupMap?: PlanGroupMap | null) {
+  return planGroupKeys.some((key) => (planGroupMap?.[key] ?? []).length > 0);
+}
+
+function formatGroupRouting(rule: AutoReplenishRuleRecord) {
+  if (hasPlanGroupMap(rule.planGroupMap)) {
+    return planGroupKeys
+      .flatMap((key) => {
+        const groups = rule.planGroupMap[key] ?? [];
+        return groups.length ? [`${planGroupLabels[key]} -> ${groups.join("/")}`] : [];
+      })
+      .join("；");
+  }
+  return rule.targetGroups.length ? rule.targetGroups.join(" / ") : "模板默认";
 }
 
 type WorkspaceView = "overview" | "connections" | "proxies" | "add-account" | "inventory" | "activity";
@@ -452,11 +490,11 @@ function RuleField({
   children: ReactNode;
 }) {
   return (
-    <label className="block rounded-2xl border border-white/10 bg-white/[0.03] p-2.5">
+    <div className="block rounded-2xl border border-white/10 bg-white/[0.03] p-2.5">
       <span className="block text-sm font-medium text-slate-100">{label}</span>
       <span className="mt-1 block text-[11px] leading-5 text-slate-500">{help}</span>
       <div className="mt-2">{children}</div>
-    </label>
+    </div>
   );
 }
 
@@ -479,6 +517,12 @@ function AutoReplenishPanel({
 }) {
   const recentRuns = autoRuns.slice(0, 3);
   const [groupText, setGroupText] = useState(autoRule.targetGroups.join("\n"));
+  const [planGroupText, setPlanGroupText] = useState<Record<PlanGroupKey, string>>(() => ({
+    plus: formatGroupText(autoRule.planGroupMap.plus),
+    free: formatGroupText(autoRule.planGroupMap.free),
+    pro: formatGroupText(autoRule.planGroupMap.pro),
+    default: formatGroupText(autoRule.planGroupMap.default),
+  }));
   const [templatePreview, setTemplatePreview] = useState<AccountTemplatePreview | null>(null);
   const [templateError, setTemplateError] = useState("");
 
@@ -508,6 +552,10 @@ function AutoReplenishPanel({
     if (payload.template.groups?.length) {
       setGroupText(payload.template.groups.join("\n"));
     }
+  }
+
+  function updatePlanGroupText(key: PlanGroupKey, value: string) {
+    setPlanGroupText((current) => ({ ...current, [key]: value }));
   }
 
   return (
@@ -570,6 +618,7 @@ function AutoReplenishPanel({
           <span>触发: {autoRule.triggerMode === "all" ? "缺号且额度低" : "缺号或额度低"}</span>
           <span>凭据: {credentialFilterLabels[autoRule.credentialFilter]}</span>
           <span>套餐: {formatPlanFilters(autoRule.planFilters)}</span>
+          <span>分组: {formatGroupRouting(autoRule)}</span>
           <span>目标 {autoRule.targetUsableAccounts}</span>
           <span>单次上限 {autoRule.maxAccountsPerRun}</span>
         </div>
@@ -714,16 +763,43 @@ function AutoReplenishPanel({
           </RuleField>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-3">
-          <RuleField label="目标分组（可多选）" help="每行一个分组；为空时使用模板账号原配置。">
-            <textarea
-              name="targetGroups"
-              value={groupText}
-              onChange={(event) => setGroupText(event.target.value)}
-              rows={4}
-              placeholder="例如：plus-pool&#10;backup"
-              className={inputClass}
-            />
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.85fr)]">
+          <RuleField label="目标分组策略" help="固定分组用于统一推送；套餐分组填写后优先按账号套餐进组。">
+            <div className="grid gap-2">
+              <div>
+                <span className="mb-1 block text-[11px] text-slate-500">
+                  固定分组（每行一个，套餐分组全空时使用）
+                </span>
+                <textarea
+                  name="targetGroups"
+                  value={groupText}
+                  onChange={(event) => setGroupText(event.target.value)}
+                  rows={3}
+                  placeholder="例如：backup&#10;default-pool"
+                  className={inputClass}
+                />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {planGroupKeys.map((key) => (
+                  <div key={key}>
+                    <span className="mb-1 block text-[11px] text-slate-500">
+                      {planGroupLabels[key]}
+                    </span>
+                    <textarea
+                      name={`planGroup_${key}`}
+                      value={planGroupText[key]}
+                      onChange={(event) => updatePlanGroupText(key, event.target.value)}
+                      rows={2}
+                      placeholder={key === "default" ? "image / 未知默认组" : `${planGroupLabels[key]}名`}
+                      className={inputClass}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] leading-5 text-slate-500">
+                Plus / Free / Pro 命中对应组；image、未知套餐或未配置套餐走默认组；仍为空再走固定分组或模板账号分组。
+              </p>
+            </div>
           </RuleField>
           <RuleField label="克隆模板账号 ID" help="填中转站账号 ID，点击同步后读取组、代理等配置。">
             <input
@@ -742,15 +818,6 @@ function AutoReplenishPanel({
             >
               同步模板
             </button>
-          </RuleField>
-          <RuleField label="推送备注" help="推送新账号时追加到备注，便于区分来源。">
-            <textarea
-              name="pushNotes"
-              defaultValue={autoRule.pushNotes ?? ""}
-              rows={4}
-              placeholder="例如：号池自动补号"
-              className={inputClass}
-            />
             <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.025] px-3 py-2 text-[11px] leading-5 text-slate-500">
               {templatePreview ? (
                 <>
@@ -764,9 +831,18 @@ function AutoReplenishPanel({
               {templateError ? <p className="text-rose-200">{templateError}</p> : null}
             </div>
           </RuleField>
-          <button disabled={isPending} className={clsx(primaryButton, "min-h-[84px]")}>
-            保存自动补池规则
-          </button>
+          <RuleField label="推送备注" help="推送新账号时追加到备注，便于区分来源。">
+            <textarea
+              name="pushNotes"
+              defaultValue={autoRule.pushNotes ?? ""}
+              rows={4}
+              placeholder="例如：号池自动补号"
+              className={inputClass}
+            />
+            <button disabled={isPending} className={clsx(primaryButton, "mt-2 min-h-[52px] w-full")}>
+              保存自动补池规则
+            </button>
+          </RuleField>
         </div>
       </form>
 
@@ -1336,10 +1412,13 @@ export default function DashboardClient({ data }: Props) {
       triggerMode: String(formData.get("triggerMode") || "any"),
       credentialFilter: String(formData.get("credentialFilter") || "all"),
       planFilters: formData.getAll("planFilters").map((item) => String(item)),
-      targetGroups: String(formData.get("targetGroups") || "")
-        .split(/[\n,，]/)
-        .map((item) => item.trim())
-        .filter(Boolean),
+      targetGroups: parseGroupText(formData.get("targetGroups")),
+      planGroupMap: {
+        plus: parseGroupText(formData.get("planGroup_plus")),
+        free: parseGroupText(formData.get("planGroup_free")),
+        pro: parseGroupText(formData.get("planGroup_pro")),
+        default: parseGroupText(formData.get("planGroup_default")),
+      },
       cloneAccountId: String(formData.get("cloneAccountId") || ""),
       pushNotes: String(formData.get("pushNotes") || ""),
       intervalMinutes: Number(formData.get("intervalMinutes") || 5),
@@ -2109,6 +2188,7 @@ export default function DashboardClient({ data }: Props) {
                                 integrationId: integration.id,
                                 accountIds: selectedIds,
                                 targetGroups: autoRule?.targetGroups ?? [],
+                                planGroupMap: autoRule?.planGroupMap ?? {},
                                 cloneAccountId: autoRule?.cloneAccountId ?? "",
                                 pushNotes: autoRule?.pushNotes ?? "",
                               }),
@@ -2123,6 +2203,7 @@ export default function DashboardClient({ data }: Props) {
                     ) : null}
                     {autoRule ? (
                       <AutoReplenishPanel
+                        key={`${integration.id}-${autoRule.updatedAt ?? "new"}`}
                         integration={integration}
                         autoRule={autoRule}
                         autoRuns={autoRuns}
@@ -3078,6 +3159,7 @@ export default function DashboardClient({ data }: Props) {
                                       integrationId: plan.integration.id,
                                       accountIds: selectedIds,
                                       targetGroups: plan.autoRule?.targetGroups ?? [],
+                                      planGroupMap: plan.autoRule?.planGroupMap ?? {},
                                       cloneAccountId: plan.autoRule?.cloneAccountId ?? "",
                                       pushNotes: plan.autoRule?.pushNotes ?? "",
                                     }),

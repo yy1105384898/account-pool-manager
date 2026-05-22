@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { AccountRecord, IntegrationPushOptions, IntegrationRecord } from "@/lib/types";
-import { fetchJson } from "@/lib/server/connectors/shared";
+import { fetchJson, resolveAccountPushGroups } from "@/lib/server/connectors/shared";
 import {
   createDistribution,
   isNormalRemoteStatus,
@@ -296,13 +296,12 @@ export async function pushToCodexProxy(
   const template = options?.cloneAccountId?.trim()
     ? await readCodexProxyAccountTemplate(integration, options.cloneAccountId)
     : null;
-  const targetGroups = options?.targetGroups?.map((item) => item.trim()).filter(Boolean) ?? [];
-  const pushGroups = targetGroups.length ? targetGroups : template?.groups ?? [];
   const templateProxy = typeof template?.proxy === "string" ? template.proxy : "";
 
   for (const item of accounts) {
     const refreshToken = resolveRefreshToken(item);
     const name = item.label ?? item.email ?? item.accountId ?? undefined;
+    const pushGroups = resolveAccountPushGroups(item, options, template?.groups ?? []);
 
     if (refreshToken) {
       await fetchJson(integration, "/api/admin/accounts", {
@@ -425,20 +424,22 @@ export async function pushToCpa(
   accounts: AccountRecord[],
   options?: IntegrationPushOptions,
 ) {
-  const targetGroups = options?.targetGroups?.map((item) => item.trim()).filter(Boolean) ?? [];
   const body = {
-    accounts: accounts.map((item) => ({
-      token: item.accessToken,
-      refreshToken: item.refreshToken ?? undefined,
-      label: item.label ?? item.email ?? item.accountId ?? undefined,
-      email: item.email ?? undefined,
-      accountId: item.accountId ?? undefined,
-      userId: item.userId ?? undefined,
-      planType: item.planType ?? undefined,
-      group: targetGroups[0],
-      groups: targetGroups.length ? targetGroups : undefined,
-      notes: options?.pushNotes?.trim() || undefined,
-    })),
+    accounts: accounts.map((item) => {
+      const targetGroups = resolveAccountPushGroups(item, options);
+      return {
+        token: item.accessToken,
+        refreshToken: item.refreshToken ?? undefined,
+        label: item.label ?? item.email ?? item.accountId ?? undefined,
+        email: item.email ?? undefined,
+        accountId: item.accountId ?? undefined,
+        userId: item.userId ?? undefined,
+        planType: item.planType ?? undefined,
+        group: targetGroups[0],
+        groups: targetGroups.length ? targetGroups : undefined,
+        notes: options?.pushNotes?.trim() || undefined,
+      };
+    }),
   };
 
   await fetchJson(integration, "/auth/accounts/import", {

@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { AccountRecord, IntegrationPushOptions, IntegrationRecord } from "@/lib/types";
-import { fetchJson } from "@/lib/server/connectors/shared";
+import { cleanGroupList, fetchJson, resolveAccountPushGroups } from "@/lib/server/connectors/shared";
 import {
   createDistribution,
   isNormalRemoteStatus,
@@ -74,8 +74,9 @@ function readGroupList(record: Record<string, unknown>) {
 function applyPushOptions(
   payload: Record<string, unknown>,
   options?: IntegrationPushOptions,
+  groups?: string[],
 ) {
-  const targetGroups = options?.targetGroups?.map((item) => item.trim()).filter(Boolean) ?? [];
+  const targetGroups = cleanGroupList(groups ?? options?.targetGroups);
   const next = { ...payload };
 
   if (targetGroups.length > 0) {
@@ -297,6 +298,7 @@ export async function pushToSub2Api(
         ? (item.metadata.sub2apiConfig as Record<string, unknown>)
         : {};
     const baseConfig = { ...storedConfig, ...templateConfig };
+    const pushGroups = resolveAccountPushGroups(item, options, readGroupList(baseConfig));
     const storedCredentials =
       baseConfig.credentials && typeof baseConfig.credentials === "object"
         ? (baseConfig.credentials as Record<string, unknown>)
@@ -323,7 +325,7 @@ export async function pushToSub2Api(
       chatgpt_account_id: credentials.chatgpt_account_id,
       chatgpt_user_id: credentials.chatgpt_user_id,
       plan_type: credentials.plan_type,
-    }), options);
+    }), options, pushGroups);
   });
 
   const body = {
