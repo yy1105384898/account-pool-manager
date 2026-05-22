@@ -556,6 +556,31 @@ export function createManualAccount(input: ManualAccountInput) {
   return id;
 }
 
+export function findManualAccountByCredential(input: {
+  accessToken?: string | null;
+  refreshToken?: string | null;
+}) {
+  const db = getDb();
+  const accessToken = input.accessToken?.trim();
+  const refreshToken = input.refreshToken?.trim();
+
+  if (accessToken) {
+    const row = db
+      .prepare("SELECT id FROM accounts WHERE source_type = 'manual' AND access_token = ? LIMIT 1")
+      .get(accessToken) as { id?: string } | undefined;
+    if (row?.id) return row.id;
+  }
+
+  if (refreshToken) {
+    const row = db
+      .prepare("SELECT id FROM accounts WHERE source_type = 'manual' AND refresh_token = ? LIMIT 1")
+      .get(refreshToken) as { id?: string } | undefined;
+    if (row?.id) return row.id;
+  }
+
+  return null;
+}
+
 export function updateAccount(
   id: string,
   patch: { label?: string; notes?: string; status?: AccountStatus },

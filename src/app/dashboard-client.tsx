@@ -232,6 +232,8 @@ function translateAutoRunStatus(value?: AutoReplenishRuleRecord["lastStatus"] | 
   return autoRunStatusLabels[value] ?? value;
 }
 
+type AccountExportFormat = "pool" | "sub2api" | "cpa";
+
 type Props = {
   data: DashboardData;
 };
@@ -744,6 +746,32 @@ export default function DashboardClient({ data }: Props) {
       );
       router.refresh();
     });
+  }
+
+  async function exportAccounts(format: AccountExportFormat) {
+    const ids = selectedIds.length > 0 ? selectedIds : accounts.map((item) => item.id);
+    if (ids.length === 0) {
+      setNotice({ type: "error", text: "没有可导出的账号" });
+      return;
+    }
+
+    const query = new URLSearchParams({ format, ids: ids.join(",") });
+    const response = await fetch(`/api/accounts/export?${query.toString()}`);
+    if (!response.ok) {
+      setNotice({ type: "error", text: "导出失败" });
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `account-pool-${format}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setNotice({ type: "success", text: `已导出 ${ids.length} 个账号` });
   }
 
   function submitIntegration(formData: FormData) {
@@ -1543,7 +1571,7 @@ export default function DashboardClient({ data }: Props) {
                   <div className="grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
                     <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">TXT 文件：每行一个 Refresh Token</div>
                     <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">AT TXT：每行一个 Access Token</div>
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">JSON：兼容数组、accounts、credentials</div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">JSON：兼容 accounts、contents、credentials</div>
                     <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-3">文件夹导入：自动读取其中的 .txt / .json</div>
                   </div>
                 </form>
@@ -1648,6 +1676,21 @@ export default function DashboardClient({ data }: Props) {
                     清空
                   </button>
                 </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/34 p-3">
+                <span className="mr-1 text-xs text-slate-500">
+                  导出 {selectedIds.length > 0 ? `已选 ${selectedIds.length} 个` : `当前列表 ${accounts.length} 个`}
+                </span>
+                <button type="button" onClick={() => void exportAccounts("pool")} className={secondaryButton}>
+                  导出号池 JSON
+                </button>
+                <button type="button" onClick={() => void exportAccounts("sub2api")} className={secondaryButton}>
+                  导出 sub2api
+                </button>
+                <button type="button" onClick={() => void exportAccounts("cpa")} className={secondaryButton}>
+                  导出 CPA
+                </button>
               </div>
 
               <div className="neon-divider mt-5 h-px" />
