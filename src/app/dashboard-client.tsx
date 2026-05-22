@@ -91,6 +91,24 @@ function formatTime(value: string | null) {
   }).format(new Date(value));
 }
 
+type RemoteStatusSummary = {
+  platform: string;
+  latencyMs: number;
+  updatedAt: string;
+  totalAccounts: number;
+  normalAccounts: number;
+  warningAccounts: number;
+  statusDistribution: Record<string, number>;
+  platformDistribution: Record<string, number>;
+  typeDistribution: Record<string, number>;
+  quotaWindows: Array<{
+    label: string;
+    usedPercent: number | null;
+    remainingPercent: number | null;
+    sampleSize: number;
+  }>;
+};
+
 type Props = {
   data: DashboardData;
 };
@@ -169,6 +187,7 @@ export default function DashboardClient({ data }: Props) {
   const [selectedPlatform, setSelectedPlatform] = useState<IntegrationType>("sub2api");
   const [accountImportMode, setAccountImportMode] = useState<"refresh" | "access" | "apiKey" | "oauth" | "json">("refresh");
   const [accountImportText, setAccountImportText] = useState("");
+  const [remoteStatusByIntegration, setRemoteStatusByIntegration] = useState<Record<string, RemoteStatusSummary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
@@ -243,6 +262,25 @@ export default function DashboardClient({ data }: Props) {
       });
       if (result.ok) setShowIntegrationForm(false);
       return result;
+    });
+  }
+
+  function refreshRemoteStatus(integrationId: string) {
+    runTask(async () => {
+      const response = await fetch(`/api/integrations/${integrationId}/status`, {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; summary?: RemoteStatusSummary }
+        | null;
+      if (!response.ok || payload?.ok === false || !payload?.summary) {
+        return { ok: false, error: payload?.error ?? "读取远端状态失败" };
+      }
+      setRemoteStatusByIntegration((current) => ({
+        ...current,
+        [integrationId]: payload.summary as RemoteStatusSummary,
+      }));
+      return { ok: true, message: `已读取远端账号 ${payload.summary.totalAccounts} 个` };
     });
   }
 
@@ -466,7 +504,12 @@ export default function DashboardClient({ data }: Props) {
                   </div>
                 ) : null}
 
-                {data.integrations.map((integration) => (
+                {data.integrations.map((integration) => {
+                  const remoteStatus = remoteStatusByIntegration[integration.id];
+                  const normalPercent = remoteStatus?.totalAccounts
+                    ? Math.round((remoteStatus.normalAccounts / remoteStatus.totalAccounts) * 100)
+                    : 0;
+                  return (
                   <article
                     key={integration.id}
                     className="group rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/36 p-4 transition hover:border-cyan-200/25 hover:bg-slate-900/46"
@@ -521,6 +564,13 @@ export default function DashboardClient({ data }: Props) {
                       </button>
                       <button
                         disabled={isPending}
+                        onClick={() => refreshRemoteStatus(integration.id)}
+                        className={secondaryButton}
+                      >
+                        刷新状态
+                      </button>
+                      <button
+                        disabled={isPending}
                         onClick={() =>
                           runTask(() =>
                             callApi(`/api/integrations/${integration.id}/sync`, {
@@ -546,6 +596,58 @@ export default function DashboardClient({ data }: Props) {
                         删除
                       </button>
                     </div>
+                    {remoteStatus ? (
+                      <div className="mt-4 rounded-[1.2rem] border border-cyan-200/12 bg-white/[0.025] p-4">
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div>
+                            <p className="text-xs text-slate-500">服务状态</p>
+                            <p className="mt-1 text-2xl font-semibold text-white">{remoteStatus.totalAccounts} 个账号</p>
+                            <p className="mt-1 text-xs text-slate-500">{remoteStatus.latencyMs}ms · {formatTime(remoteStatus.updatedAt)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">正常账号</p>
+                            <p className="mt-1 text-2xl font-semibold text-white">{remoteStatus.normalAccounts}/{remoteStatus.totalAccounts}</p>
+                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                              <div className="h-full rounded-full bg-emerald-400" style={{ width: `${normalPercent}%` }} />
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">额度概览</p>
+                            <p className="mt-1 text-2xl font-semibold text-white">
+                              {remoteStatus.quotaWindows[0]?.usedPercent ?? "未刷新"}{typeof remoteStatus.quotaWindows[0]?.usedPercent === "number" ? "%" : ""}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">5h 使用率</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-3">
+                            <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+                              <span>状态分布</span>
+                              <span>{remoteStatus.warningAccounts} 异常</span>
+                            </div>
+                            {Object.entries(remoteStatus.statusDistribution).map(([key, value]) => (
+                              <div key={key} className="mb-2 last:mb-0">
+                                <div className="mb-1 flex justify-between text-xs text-slate-300"><span>{key}</span><span>{value}</span></div>
+                                <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-cyan-300" style={{ width: `${remoteStatus.totalAccounts ? Math.round((value / remoteStatus.totalAccounts) * 100) : 0}%` }} /></div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-3">
+                            <div className="mb-2 text-xs text-slate-500">额度窗口</div>
+                            {remoteStatus.quotaWindows.map((window) => (
+                              <div key={window.label} className="mb-2 last:mb-0">
+                                <div className="mb-1 flex justify-between text-xs text-slate-300"><span>{window.label}</span><span>{window.usedPercent ?? "未返回"}{typeof window.usedPercent === "number" ? "%" : ""}</span></div>
+                                <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${window.usedPercent ?? 0}%` }} /></div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="mt-3 grid gap-3 text-xs text-slate-500 sm:grid-cols-2">
+                          <p>平台分布：{Object.entries(remoteStatus.platformDistribution).map(([key, value]) => `${key} ${value}`).join(" / ")}</p>
+                          <p>类型分布：{Object.entries(remoteStatus.typeDistribution).map(([key, value]) => `${key} ${value}`).join(" / ")}</p>
+                        </div>
+                      </div>
+                    ) : null}
                     {selectedIds.length > 0 ? (
                       <button
                         disabled={isPending}
@@ -568,7 +670,8 @@ export default function DashboardClient({ data }: Props) {
                       </button>
                     ) : null}
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </section>
 

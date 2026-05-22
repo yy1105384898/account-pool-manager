@@ -2,6 +2,13 @@ import "server-only";
 
 import type { AccountRecord, IntegrationRecord } from "@/lib/types";
 import { fetchJson } from "@/lib/server/connectors/shared";
+import {
+  createDistribution,
+  isNormalRemoteStatus,
+  normalizeRemoteStatus,
+  percent,
+  type RemoteStatusSummary,
+} from "@/lib/server/connectors/status";
 
 type AdminDataPayload = {
   accounts?: Array<{
@@ -10,6 +17,8 @@ type AdminDataPayload = {
     platform?: string;
     type?: string;
     credentials?: Record<string, unknown>;
+    quota?: Record<string, unknown>;
+    usage?: Record<string, unknown>;
   }>;
 };
 
@@ -138,6 +147,59 @@ export async function importFromSub2Api(integration: IntegrationRecord) {
       },
     ];
   });
+}
+
+export async function readSub2ApiStatus(integration: IntegrationRecord): Promise<RemoteStatusSummary> {
+  const started = Date.now();
+  const query = new URLSearchParams({
+    platform: "openai",
+    type: "oauth",
+    include_proxies: "false",
+  });
+  const [payload, statuses] = await Promise.all([
+    fetchJson<AdminDataPayload>(
+      integration,
+      `/api/v1/admin/accounts/data?${query.toString()}`,
+    ),
+    loadStatuses(integration),
+  ]);
+  const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  const statusValues = accounts.map((item) =>
+    normalizeRemoteStatus(item.name ? statuses.get(item.name) : null),
+  );
+  const normalAccounts = statusValues.filter((status) => isNormalRemoteStatus(status)).length;
+  const quota5h = accounts
+    .map((item) => percent(item.quota?.["5h"] ?? item.usage?.["5h"] ?? item.credentials?.quota5hUsedPercent))
+    .filter((value) => value !== null);
+  const quota7d = accounts
+    .map((item) => percent(item.quota?.["7d"] ?? item.usage?.["7d"] ?? item.credentials?.quota7dUsedPercent))
+    .filter((value) => value !== null);
+
+  return {
+    platform: "sub2api",
+    latencyMs: Date.now() - started,
+    updatedAt: new Date().toISOString(),
+    totalAccounts: accounts.length,
+    normalAccounts,
+    warningAccounts: accounts.length - normalAccounts,
+    statusDistribution: createDistribution(statusValues),
+    platformDistribution: createDistribution(accounts.map((item) => item.platform ?? "OpenAI")),
+    typeDistribution: createDistribution(accounts.map((item) => item.type ?? "OAuth")),
+    quotaWindows: [
+      {
+        label: "5h",
+        usedPercent: quota5h.length ? Math.round(quota5h.reduce((sum, value) => sum + value, 0) / quota5h.length * 10) / 10 : null,
+        remainingPercent: quota5h.length ? Math.round((100 - quota5h.reduce((sum, value) => sum + value, 0) / quota5h.length) * 10) / 10 : null,
+        sampleSize: quota5h.length || accounts.length,
+      },
+      {
+        label: "7d",
+        usedPercent: quota7d.length ? Math.round(quota7d.reduce((sum, value) => sum + value, 0) / quota7d.length * 10) / 10 : null,
+        remainingPercent: quota7d.length ? Math.round((100 - quota7d.reduce((sum, value) => sum + value, 0) / quota7d.length) * 10) / 10 : null,
+        sampleSize: quota7d.length || accounts.length,
+      },
+    ],
+  };
 }
 
 export async function pushToSub2Api(
