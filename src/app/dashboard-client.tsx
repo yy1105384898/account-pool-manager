@@ -1898,6 +1898,8 @@ export default function DashboardClient({ data }: Props) {
                         <tr>
                           <th className="px-4 py-3">代理</th>
                           <th className="px-4 py-3">状态</th>
+                          <th className="px-4 py-3">地区</th>
+                          <th className="px-4 py-3">出口 IP</th>
                           <th className="px-4 py-3">延迟</th>
                           <th className="px-4 py-3">测试结果</th>
                           <th className="px-4 py-3">最后检测</th>
@@ -1907,7 +1909,7 @@ export default function DashboardClient({ data }: Props) {
                       <tbody>
                         {data.proxies.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                            <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                               还没有代理。库存账号检测 OpenAI 时会直连，建议先添加代理。
                             </td>
                           </tr>
@@ -1927,6 +1929,18 @@ export default function DashboardClient({ data }: Props) {
                               )}>
                                 {proxy.enabled ? "启用" : "停用"}
                               </span>
+                            </td>
+                            <td className="px-4 py-4 text-xs text-slate-300">
+                              {proxy.lastTestLocation ? (
+                                <span className="inline-flex rounded-full border border-cyan-200/14 bg-cyan-300/8 px-2.5 py-1">
+                                  {proxy.lastTestLocation}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">未测试</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 font-mono text-xs text-slate-400">
+                              {proxy.lastTestIp ?? "-"}
                             </td>
                             <td className="px-4 py-4 text-slate-300">
                               {proxy.lastLatencyMs === null ? "未测试" : `${proxy.lastLatencyMs}ms`}

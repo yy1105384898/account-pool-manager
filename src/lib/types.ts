@@ -110,6 +110,8 @@ export type ProxyRecord = {
   lastTestStatus: "success" | "error" | null;
   lastTestMessage: string | null;
   lastLatencyMs: number | null;
+  lastTestIp: string | null;
+  lastTestLocation: string | null;
   lastTestedAt: string | null;
   createdAt: string;
   updatedAt: string;

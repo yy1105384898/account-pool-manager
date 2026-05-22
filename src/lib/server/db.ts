@@ -162,6 +162,8 @@ function getDb() {
       last_test_status TEXT,
       last_test_message TEXT,
       last_latency_ms INTEGER,
+      last_test_ip TEXT,
+      last_test_location TEXT,
       last_tested_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -177,6 +179,8 @@ function getDb() {
   for (const statement of [
     "ALTER TABLE integrations ADD COLUMN last_status_summary_json TEXT",
     "ALTER TABLE integrations ADD COLUMN last_status_checked_at TEXT",
+    "ALTER TABLE proxies ADD COLUMN last_test_ip TEXT",
+    "ALTER TABLE proxies ADD COLUMN last_test_location TEXT",
   ]) {
     try {
       db.exec(statement);
@@ -351,6 +355,10 @@ function mapProxyRow(row: Record<string, unknown>): ProxyRecord {
       typeof row.last_test_message === "string" ? row.last_test_message : null,
     lastLatencyMs:
       typeof row.last_latency_ms === "number" ? row.last_latency_ms : null,
+    lastTestIp:
+      typeof row.last_test_ip === "string" ? row.last_test_ip : null,
+    lastTestLocation:
+      typeof row.last_test_location === "string" ? row.last_test_location : null,
     lastTestedAt:
       typeof row.last_tested_at === "string" ? row.last_tested_at : null,
     createdAt: String(row.created_at),
@@ -576,25 +584,31 @@ export function updateProxy(
     lastTestStatus?: "success" | "error";
     lastTestMessage?: string;
     lastLatencyMs?: number;
+    lastTestIp?: string | null;
+    lastTestLocation?: string | null;
   },
 ) {
   const existing = getProxyById(id);
   if (!existing) return null;
   const db = getDb();
   const timestamp = nowIso();
-  const lastTestedAt = patch.lastTestStatus ? timestamp : existing.lastTestedAt;
+  const urlChanged = patch.url !== undefined && patch.url.trim() !== existing.url;
+  const lastTestedAt = patch.lastTestStatus ? timestamp : (urlChanged ? null : existing.lastTestedAt);
   db.prepare(`
     UPDATE proxies
     SET name = ?, url = ?, enabled = ?, last_test_status = ?, last_test_message = ?,
-        last_latency_ms = ?, last_tested_at = ?, updated_at = ?
+        last_latency_ms = ?, last_test_ip = ?, last_test_location = ?,
+        last_tested_at = ?, updated_at = ?
     WHERE id = ?
   `).run(
     patch.name !== undefined ? normalizeNullable(patch.name) ?? existing.name : existing.name,
     patch.url !== undefined ? patch.url.trim() : existing.url,
     patch.enabled !== undefined ? (patch.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
-    patch.lastTestStatus ?? existing.lastTestStatus,
-    patch.lastTestMessage !== undefined ? normalizeNullable(patch.lastTestMessage) : existing.lastTestMessage,
-    patch.lastLatencyMs !== undefined ? patch.lastLatencyMs : existing.lastLatencyMs,
+    patch.lastTestStatus ?? (urlChanged ? null : existing.lastTestStatus),
+    patch.lastTestMessage !== undefined ? normalizeNullable(patch.lastTestMessage) : (urlChanged ? null : existing.lastTestMessage),
+    patch.lastLatencyMs !== undefined ? patch.lastLatencyMs : (urlChanged ? null : existing.lastLatencyMs),
+    patch.lastTestIp !== undefined ? normalizeNullable(patch.lastTestIp) : (urlChanged ? null : existing.lastTestIp),
+    patch.lastTestLocation !== undefined ? normalizeNullable(patch.lastTestLocation) : (urlChanged ? null : existing.lastTestLocation),
     lastTestedAt,
     timestamp,
     id,
