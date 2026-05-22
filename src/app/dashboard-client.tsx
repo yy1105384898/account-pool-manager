@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useRef, useState, useTransition } from "react";
+import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import {
@@ -147,7 +148,7 @@ const workspaceViewMeta: Record<
   connections: {
     eyebrow: "Relay Target",
     title: "中转站管理",
-    description: "配置 codexproxy / sub2api / CPA，检测远端账号状态并执行补池规则。",
+    description: "可添加多个 codexproxy / sub2api / CPA 中转站，每个中转站独立检测、补池、推送。",
   },
   "add-account": {
     eyebrow: "Add Account",
@@ -296,6 +297,24 @@ function MiniStatus({ label, value }: { label: string; value: string | number })
   );
 }
 
+function RuleField({
+  label,
+  help,
+  children,
+}: {
+  label: string;
+  help: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block rounded-2xl border border-white/10 bg-white/[0.03] p-2.5">
+      <span className="block text-sm font-medium text-slate-100">{label}</span>
+      <span className="mt-1 block text-[11px] leading-5 text-slate-500">{help}</span>
+      <div className="mt-2">{children}</div>
+    </label>
+  );
+}
+
 function AutoReplenishPanel({
   integration,
   autoRule,
@@ -382,104 +401,122 @@ function AutoReplenishPanel({
         </p>
       </div>
 
-      <form action={onSave} className="mt-4 grid gap-3">
+      <form action={onSave} className="mt-4 space-y-3">
+        <div className="rounded-2xl border border-cyan-200/12 bg-cyan-300/[0.045] px-3 py-2.5">
+          <p className="text-sm font-medium text-cyan-50">补池规则设置</p>
+          <p className="mt-1 text-[11px] leading-5 text-slate-400">
+            远端中转正常账号低于阈值，或 5h 剩余额度低于阈值时，从本地号池自动补推账号。
+          </p>
+        </div>
+
         <div className="grid gap-3 lg:grid-cols-4">
-          <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-slate-200">
+          <RuleField label="启用自动补池" help="按间隔自动检测并补号。">
             <input
               type="checkbox"
               name="enabled"
               defaultChecked={autoRule.enabled}
               className="h-4 w-4 accent-cyan-300"
             />
-            启用自动补池
-          </label>
-          <select name="triggerMode" defaultValue={autoRule.triggerMode} className={inputClass}>
-            <option value="any">任一触发</option>
-            <option value="all">全部满足</option>
-          </select>
-          <select
-            name="credentialFilter"
-            defaultValue={autoRule.credentialFilter}
-            className={inputClass}
-          >
-            <option value="all">全部账号</option>
-            <option value="has_refresh_token">仅 Refresh Token</option>
-            <option value="access_only">仅 Access Token</option>
-          </select>
-          <input
-            type="number"
-            min={1}
-            max={1440}
-            name="intervalMinutes"
-            defaultValue={autoRule.intervalMinutes}
-            placeholder="检查间隔(分钟)"
-            className={inputClass}
-          />
+          </RuleField>
+          <RuleField label="触发方式" help="任一触发更灵敏；全部满足更保守。">
+            <select name="triggerMode" defaultValue={autoRule.triggerMode} className={inputClass}>
+              <option value="any">任一触发</option>
+              <option value="all">全部满足</option>
+            </select>
+          </RuleField>
+          <RuleField label="可用账号范围" help="选择哪类账号推送。">
+            <select
+              name="credentialFilter"
+              defaultValue={autoRule.credentialFilter}
+              className={inputClass}
+            >
+              <option value="all">全部账号</option>
+              <option value="has_refresh_token">仅 Refresh Token</option>
+              <option value="access_only">仅 Access Token</option>
+            </select>
+          </RuleField>
+          <RuleField label="检查间隔（分钟）" help="多久检查一次状态。">
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              name="intervalMinutes"
+              defaultValue={autoRule.intervalMinutes}
+              className={inputClass}
+            />
+          </RuleField>
         </div>
+
         <div className="grid gap-3 lg:grid-cols-4">
-          <input
-            type="number"
-            min={0}
-            name="minUsableAccounts"
-            defaultValue={autoRule.minUsableAccounts}
-            placeholder="最少正常账号"
-            className={inputClass}
-          />
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step="0.1"
-            name="min5hRemainingPercent"
-            defaultValue={autoRule.min5hRemainingPercent}
-            placeholder="5h 最低剩余额度%"
-            className={inputClass}
-          />
-          <input
-            type="number"
-            min={0}
-            name="targetUsableAccounts"
-            defaultValue={autoRule.targetUsableAccounts}
-            placeholder="目标正常账号"
-            className={inputClass}
-          />
-          <input
-            type="number"
-            min={0}
-            name="quotaLowPurchaseCount"
-            defaultValue={autoRule.quotaLowPurchaseCount}
-            placeholder="额度不足补号数"
-            className={inputClass}
-          />
+          <RuleField label="最低正常账号数" help="低于此数认为缺号。">
+            <input
+              type="number"
+              min={0}
+              name="minUsableAccounts"
+              defaultValue={autoRule.minUsableAccounts}
+              className={inputClass}
+            />
+          </RuleField>
+          <RuleField label="5h 最低剩余额度（%）" help="低于此值认为额度偏低。">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.1"
+              name="min5hRemainingPercent"
+              defaultValue={autoRule.min5hRemainingPercent}
+              className={inputClass}
+            />
+          </RuleField>
+          <RuleField label="目标正常账号数" help="补号后保持的数量。">
+            <input
+              type="number"
+              min={0}
+              name="targetUsableAccounts"
+              defaultValue={autoRule.targetUsableAccounts}
+              className={inputClass}
+            />
+          </RuleField>
+          <RuleField label="单次最多补号" help="限制单次推送数量。">
+            <input
+              type="number"
+              min={1}
+              name="maxAccountsPerRun"
+              defaultValue={autoRule.maxAccountsPerRun}
+              className={inputClass}
+            />
+          </RuleField>
         </div>
+
         <div className="grid gap-3 lg:grid-cols-4">
-          <input
-            type="number"
-            min={1}
-            name="maxAccountsPerRun"
-            defaultValue={autoRule.maxAccountsPerRun}
-            placeholder="单次最多补号"
-            className={inputClass}
-          />
-          <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-slate-200">
+          <RuleField label="额度不足补号数" help="额度低时额外补推数。">
+            <input
+              type="number"
+              min={0}
+              name="quotaLowPurchaseCount"
+              defaultValue={autoRule.quotaLowPurchaseCount}
+              className={inputClass}
+            />
+          </RuleField>
+          <RuleField label="额度低时等待恢复" help="先等恢复窗口再补号。">
             <input
               type="checkbox"
               name="respectRateLimitRecovery"
               defaultChecked={autoRule.respectRateLimitRecovery}
               className="h-4 w-4 accent-cyan-300"
             />
-            额度低时恢复等待
-          </label>
-          <input
-            type="number"
-            min={0}
-            max={1440}
-            name="rateLimitRecoveryGraceMinutes"
-            defaultValue={autoRule.rateLimitRecoveryGraceMinutes}
-            placeholder="恢复等待(分钟)"
-            className={inputClass}
-          />
-          <button disabled={isPending} className={primaryButton}>
+          </RuleField>
+          <RuleField label="恢复等待（分钟）" help="等待后再次判断额度。">
+            <input
+              type="number"
+              min={0}
+              max={1440}
+              name="rateLimitRecoveryGraceMinutes"
+              defaultValue={autoRule.rateLimitRecoveryGraceMinutes}
+              className={inputClass}
+            />
+          </RuleField>
+          <button disabled={isPending} className={clsx(primaryButton, "min-h-[84px]")}>
             保存自动补池规则
           </button>
         </div>
@@ -535,6 +572,11 @@ export default function DashboardClient({ data }: Props) {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const selectedIntegrationConfig = integrationFormConfig[selectedPlatform];
+  const integrationNameSuggestion = data.integrations.some(
+    (item) => item.name === selectedIntegrationConfig.defaultName,
+  )
+    ? `${selectedIntegrationConfig.defaultName}-${data.integrations.length + 1}`
+    : selectedIntegrationConfig.defaultName;
   const remoteStatusByIntegration = {
     ...Object.fromEntries(
       data.integrations.flatMap((item) =>
@@ -837,8 +879,8 @@ export default function DashboardClient({ data }: Props) {
 
   return (
     <div className="cyber-shell min-h-screen text-slate-100">
-      <div className="grid min-h-screen w-full lg:grid-cols-[260px_minmax(0,1fr)]">
-        <nav className="command-bar z-30 flex flex-col gap-5 rounded-none border-x-0 border-t-0 px-4 py-5 text-sm text-slate-200 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r lg:border-cyan-200/14">
+      <div className="min-h-screen w-full lg:pl-[260px]">
+        <nav className="command-bar z-30 flex flex-col gap-5 rounded-none border-x-0 border-t-0 px-4 py-5 text-sm text-slate-200 lg:fixed lg:inset-y-0 lg:left-0 lg:h-auto lg:w-[260px] lg:overflow-y-auto lg:border-b-0 lg:border-r lg:border-cyan-200/14">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/25 bg-cyan-300/15 text-cyan-100 shadow-[0_0_28px_rgba(34,211,238,0.20)]">
               <Cpu className="h-5 w-5" />
@@ -884,7 +926,31 @@ export default function DashboardClient({ data }: Props) {
             })}
           </div>
 
-          <div className="mt-auto grid gap-2 text-xs">
+          <div className="rounded-[1.35rem] border border-cyan-200/14 bg-slate-950/34 p-3 text-xs">
+            <p className="font-mono uppercase tracking-[0.24em] text-cyan-200/60">
+              当前页面
+            </p>
+            <p className="mt-2 text-sm font-medium text-white">{activeViewMeta.title}</p>
+            <p className="mt-2 leading-5 text-slate-400">{activeViewMeta.description}</p>
+          </div>
+
+          <div className="rounded-[1.35rem] border border-cyan-200/14 bg-slate-950/34 p-3 text-xs">
+            <p className="font-mono uppercase tracking-[0.24em] text-cyan-200/60">
+              补号流程
+            </p>
+            <div className="mt-3 grid gap-2">
+              {["导入账号入池", "检测中转状态", "选择可用账号", "推送补充中转"].map((item, index) => (
+                <div key={item} className="flex items-center gap-2 rounded-xl bg-white/[0.035] px-3 py-2 text-slate-300">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/10 font-mono text-[10px] text-cyan-100">
+                    {index + 1}
+                  </span>
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-2 text-xs">
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-cyan-100">
               <Network className="h-3.5 w-3.5" /> {data.summary.totalAccounts} 个账号
             </span>
@@ -893,6 +959,9 @@ export default function DashboardClient({ data }: Props) {
             </span>
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-amber-100">
               <Activity className="h-3.5 w-3.5" /> 风险 {warningRate}%
+            </span>
+            <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-emerald-100">
+              <ShieldCheck className="h-3.5 w-3.5" /> 待补 {relayNeedPushCount} 个中转
             </span>
           </div>
         </nav>
@@ -1127,10 +1196,10 @@ export default function DashboardClient({ data }: Props) {
                 <div>
                   <p className={sectionTitleClass}>Relay Target</p>
                   <h2 className="mt-2 text-2xl font-semibold tracking-[-0.055em] text-white">
-                    中转站连接设置
+                    中转站列表
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-slate-400">
-                    只维护当前生效中转站。号池向中转站推送账号，并读取中转站状态，不反向导回本地。
+                    支持多个中转站。每个中转站独立检测远端账号状态、配置自动补池、接收本地号池推送。
                   </p>
                 </div>
                 <button
@@ -1138,7 +1207,7 @@ export default function DashboardClient({ data }: Props) {
                   className="rounded-full border border-cyan-200/25 bg-cyan-300/10 px-3.5 py-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/16"
                 >
                   <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1.5 text-xs text-amber-100">
-                    {data.integrations.length > 0 ? "已连接" : "未配置"}
+                    {showIntegrationForm ? "收起新增" : `新增中转站 · 已有 ${data.integrations.length} 个`}
                   </span>
                 </button>
               </div>
@@ -1162,7 +1231,7 @@ export default function DashboardClient({ data }: Props) {
                     key={`integration-name-${selectedPlatform}`}
                     name="name"
                     placeholder="连接名称，可不填"
-                    defaultValue={selectedIntegrationConfig.defaultName}
+                    defaultValue={integrationNameSuggestion}
                     className={inputClass}
                   />
                   <input
@@ -1188,7 +1257,7 @@ export default function DashboardClient({ data }: Props) {
               <div className="space-y-3">
                 {data.integrations.length === 0 ? (
                   <div className="rounded-[1.4rem] border border-dashed border-cyan-200/14 bg-white/[0.025] px-4 py-6 text-sm text-slate-400">
-                    先添加一个中转站连接。支持 sub2api、CPA、codexproxy（codex2api 管理端），系统会在这里显示连通状态、鉴权方式和账号状态概览。
+                    先添加一个中转站连接。后续可以继续新增多个中转站，每个中转独立显示连通、账号状态、自动补池规则。
                   </div>
                 ) : null}
 
