@@ -20,6 +20,7 @@ import {
   RefreshCw,
   ServerCog,
   ShieldCheck,
+  LogOut,
   Sparkles,
 } from "lucide-react";
 import type {
@@ -925,6 +926,13 @@ export default function DashboardClient({ data }: Props) {
     );
   }
 
+  function logout() {
+    startTransition(async () => {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.location.href = "/login";
+    });
+  }
+
   async function readFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const chunks = await Promise.all(
@@ -1137,6 +1145,13 @@ export default function DashboardClient({ data }: Props) {
             <span className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-emerald-100">
               <ShieldCheck className="h-3.5 w-3.5" /> 待补 {relayNeedPushCount} 个中转
             </span>
+            <button
+              type="button"
+              onClick={logout}
+              className="command-pill inline-flex items-center gap-2 rounded-full px-3 py-2 text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-400/10"
+            >
+              <LogOut className="h-3.5 w-3.5" /> 退出登录
+            </button>
           </div>
         </nav>
 
