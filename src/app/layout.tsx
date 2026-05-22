@@ -14,8 +14,8 @@ const monoFont = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "号池管理系统",
-  description: "支持 codexproxy 和 sub2api 导入、状态查看与账号推送",
+  title: "杨洋的补号系统",
+  description: "用于中转站账号监控、推送和自动补号",
 };
 
 export default function RootLayout({

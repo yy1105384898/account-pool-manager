@@ -159,7 +159,7 @@ const planGroupLabels: Record<PlanGroupKey, string> = {
   plus: "Plus 组",
   free: "Free 组",
   pro: "Pro 组",
-  default: "Image 组",
+  default: "默认组",
 };
 
 function formatPlanFilters(planFilters: AutoReplenishRuleRecord["planFilters"]) {
@@ -170,7 +170,7 @@ function formatPlanFilters(planFilters: AutoReplenishRuleRecord["planFilters"]) 
 
 function parseGroupText(value: FormDataEntryValue | null) {
   return String(value || "")
-    .split(/[\n,，]/)
+    .split(/[\n,，|]/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -754,14 +754,14 @@ function AutoReplenishPanel({
                       value={planGroupText[key]}
                       onChange={(event) => updatePlanGroupText(key, event.target.value)}
                       rows={2}
-                      placeholder={key === "default" ? "image" : `${planGroupLabels[key]}名`}
+                      placeholder={key === "default" ? "未识别套餐进这里" : `例如：${key}|image`}
                       className={inputClass}
                     />
                   </div>
                 ))}
               </div>
               <p className="text-[11px] leading-5 text-slate-500">
-                Image 组作为附加组；只给已填写套餐组的账号追加，未填写对应套餐组和未知套餐都不进组。
+                每个套餐框可用 |、换行或逗号填多个组；例如 pro|image 就进 pro + image。未识别套餐走默认组。
               </p>
             </div>
           </RuleField>
@@ -1570,9 +1570,9 @@ export default function DashboardClient({ data }: Props) {
               </div>
               <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-cyan-100/70">
-                  NexusPool
+                  RefillOps
                 </p>
-                <p className="text-sm font-medium text-white">号池管理系统</p>
+                <p className="text-sm font-medium text-white">杨洋的补号系统</p>
               </div>
             </div>
 

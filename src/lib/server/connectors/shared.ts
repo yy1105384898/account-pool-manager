@@ -50,7 +50,12 @@ export function buildUrl(baseUrl: string, path: string, query?: URLSearchParams)
 }
 
 export function cleanGroupList(groups?: string[] | null) {
-  return groups?.map((item) => item.trim()).filter(Boolean) ?? [];
+  return groups?.flatMap((item) =>
+    item
+      .split(/[\n,，|]/)
+      .map((group) => group.trim())
+      .filter(Boolean),
+  ) ?? [];
 }
 
 function uniqueGroupList(groups: string[]) {
@@ -81,13 +86,10 @@ export function resolveAccountPushGroups(
   const planGroupMap = options?.planGroupMap;
   if (hasPlanGroups(planGroupMap)) {
     const planKey = normalizePlanKey(account.planType);
-    if (!planKey) return [];
+    if (!planKey) return cleanGroupList(planGroupMap?.default);
 
     const routedGroups = cleanGroupList(planGroupMap?.[planKey]);
-    if (routedGroups.length === 0) return [];
-
-    const defaultGroups = cleanGroupList(planGroupMap?.default);
-    return uniqueGroupList([...routedGroups, ...defaultGroups]);
+    return uniqueGroupList(routedGroups);
   }
 
   const targetGroups = cleanGroupList(options?.targetGroups);

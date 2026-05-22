@@ -229,7 +229,7 @@ function parseStringList(value: unknown) {
   }
   if (typeof value === "string" && value.trim()) {
     return value
-      .split(/[\n,，]/)
+      .split(/[\n,，|]/)
       .map((item) => item.trim())
       .filter(Boolean);
   }
