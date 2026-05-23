@@ -34,18 +34,32 @@ export async function POST(request: Request) {
         String(item.account_id),
       ),
     );
-    const duplicateCount = accounts.filter((item) => pushedState.has(item.id)).length;
+    const duplicateAccounts = accounts.filter((item) => pushedState.has(item.id));
+    const duplicateCount = duplicateAccounts.length;
     const inactiveCount = accounts.filter((item) => item.status !== "active").length;
     const locallyPushableAccounts = accounts.filter(
       (item) => item.status === "active" && !pushedState.has(item.id),
     );
 
     if (locallyPushableAccounts.length === 0) {
-      const reason =
-        duplicateCount > 0
-          ? `所选账号都已推送过 ${integration.name}，已阻止重复推送`
-          : "所选账号没有可推送的正常库存号";
-      return NextResponse.json({ ok: false, error: reason }, { status: 400 });
+      if (duplicateAccounts.length > 0) {
+        const verificationResult = await verifyPushedAccountsOnIntegration(
+          integration,
+          duplicateAccounts,
+        );
+        const message = `所选账号已推送过 ${integration.name}，未重复推送；已同步中转站状态，${verificationResult.message}`;
+        addActivityLog("account_push", "info", "账号状态已同步", message, {
+          integrationId: integration.id,
+          skippedDuplicate: duplicateCount,
+        });
+        revalidatePath("/");
+        return NextResponse.json({ ok: true, result: { pushed: 0, message }, message });
+      }
+      return NextResponse.json({ ok: false, error: "所选账号没有可推送的正常库存号" }, { status: 400 });
+    }
+
+    if (duplicateAccounts.length > 0) {
+      await verifyPushedAccountsOnIntegration(integration, duplicateAccounts);
     }
 
     const presence = await splitAccountsByIntegrationPresence(

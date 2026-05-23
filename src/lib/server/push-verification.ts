@@ -141,6 +141,8 @@ export async function verifyPushedAccountsOnIntegration(
           lastPushCheckIntegrationName: integration.name,
           lastPushCheckStatus: "missing",
           lastPushCheckMessage: "推送后未在中转站找到，已标记异常，避免重复补号",
+          lastCheckMessage: "中转站未找到该账号，已标记异常",
+          accountPlanSource: "relay",
           lastPushCheckedAt: checkedAt,
         },
       });
@@ -150,6 +152,9 @@ export async function verifyPushedAccountsOnIntegration(
     const remoteStatus = normalizeRemoteStatus(matched.status);
     const accountStatus = toAccountStatus(matched.status);
     const isNormal = isNormalRemoteStatus(matched.status);
+    const pushCheckMessage = isNormal
+      ? `中转站 ${integration.name} 状态正常`
+      : `中转站 ${integration.name} 状态异常：${remoteStatus}`;
     if (isNormal) normal += 1;
     else abnormal += 1;
 
@@ -161,9 +166,9 @@ export async function verifyPushedAccountsOnIntegration(
         lastPushCheckIntegrationId: integration.id,
         lastPushCheckIntegrationName: integration.name,
         lastPushCheckStatus: isNormal ? "normal" : "abnormal",
-        lastPushCheckMessage: isNormal
-          ? "推送后中转站状态正常"
-          : `推送后中转站状态异常：${remoteStatus}`,
+        lastPushCheckMessage: pushCheckMessage,
+        lastCheckMessage: pushCheckMessage,
+        accountPlanSource: "relay",
         lastPushCheckedAt: checkedAt,
       },
     });
