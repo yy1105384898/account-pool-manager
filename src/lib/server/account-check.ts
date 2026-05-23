@@ -218,6 +218,14 @@ function buildMessage(snapshot: AccountSnapshot) {
   return `套餐 ${plan}`;
 }
 
+function buildUnavailableMessage(results: ProbeResult[]) {
+  const firstError = results.find((item) => item.error)?.error ?? "未读取到套餐订阅信息";
+  if (results.some((item) => item.status === 401 || item.status === 403)) {
+    return `库存直检未授权（${firstError}），保留导入状态`;
+  }
+  return `库存直检未返回套餐，保留导入状态（${firstError}）`;
+}
+
 function buildSnapshotMetadata(snapshot: AccountSnapshot, message: string, latencyMs: number) {
   const metadata: Record<string, unknown> = {
     lastCheckMessage: message,
@@ -245,6 +253,7 @@ function activeStatus(): AccountStatus {
 function shouldCheckAccount(account: AccountRecord, now: number) {
   if (!account.accessToken.trim()) return false;
   if (account.status === "disabled" || account.status === "banned") return false;
+  if (account.lastPushedAt) return false;
   if (!account.lastStatusCheckedAt) return true;
   const checkedAt = Date.parse(account.lastStatusCheckedAt);
   return !Number.isFinite(checkedAt) || now - checkedAt >= ACCOUNT_CHECK_STALE_MS;
@@ -278,14 +287,15 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
     const latencyMs = Date.now() - started;
     const snapshot = extractSnapshot(results);
     if (!snapshot.rawSources.length) {
-      const firstError = results.find((item) => item.error)?.error ?? "未读取到套餐订阅信息";
+      const message = buildUnavailableMessage(results);
       updateAccountTestResult(id, {
-        status: "error",
-        remoteStatus: results.some((item) => item.status === 401 || item.status === 403) ? "unauthorized" : "subscription_unavailable",
+        status: account.status === "error" || account.status === "unknown" ? "active" : account.status,
+        remoteStatus: "subscription_unavailable",
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
+        planType: account.planType,
         metadata: {
-          lastCheckMessage: firstError,
+          lastCheckMessage: message,
           lastCheckLatencyMs: latencyMs,
           accountPlanSource: "none",
           subscriptionStatus: undefined,
@@ -299,8 +309,8 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
         },
       });
       persistedFailure = true;
-      if (!options.silent) addActivityLog("account_test", "error", "账号检测失败", firstError, { accountId: id });
-      throw new Error(firstError);
+      if (!options.silent) addActivityLog("account_test", "info", "库存直检未确认", message, { accountId: id });
+      return { ok: true, message };
     }
 
     const message = buildMessage(snapshot);

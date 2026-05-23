@@ -107,6 +107,27 @@ function readStatus(record: Record<string, unknown>): AccountStatus {
   return accountStatuses.includes(value as AccountStatus) ? (value as AccountStatus) : "active";
 }
 
+function readPlanType(record: Record<string, unknown>) {
+  const value = readNestedString(record, [
+    "planType",
+    "plan_type",
+    "chatgpt_plan_type",
+    "account_plan_type",
+    "subscription_plan_type",
+    "subscription_plan",
+    "account_plan",
+    "plan",
+    "sku",
+  ]);
+  const normalized = value.trim().toLowerCase();
+  if (normalized.includes("plus")) return "Plus";
+  if (normalized.includes("pro")) return "Pro";
+  if (normalized.includes("team")) return "Team";
+  if (normalized.includes("enterprise")) return "Enterprise";
+  if (normalized.includes("free")) return "Free";
+  return value;
+}
+
 function parseJsonAccounts(value: string): ManualAccountInput[] {
   const items = parseJsonPayloads(value).flatMap(collectAccountItems);
 
@@ -140,7 +161,7 @@ function parseJsonAccounts(value: string): ManualAccountInput[] {
           "id",
         ]),
         userId: readNestedString(record, ["userId", "user_id", "chatgpt_user_id", "openai_user_id"]),
-        planType: readNestedString(record, ["planType", "plan_type", "plan", "platform", "sku"]),
+        planType: readPlanType(record),
         accessToken: accessToken || `refresh:${refreshToken}`,
         refreshToken,
         status: readStatus(record),

@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { AccountRecord, IntegrationPushOptions, IntegrationRecord } from "@/lib/types";
+import type {
+  AccountRecord,
+  IntegrationPushOptions,
+  IntegrationRecord,
+  RemoteAccountSnapshot,
+} from "@/lib/types";
 import {
   importFromCpa,
   importFromCodexProxy,
@@ -38,6 +43,12 @@ export async function importAccountsFromIntegration(integration: IntegrationReco
     return importFromCpa(integration);
   }
   return importFromSub2Api(integration);
+}
+
+export async function readIntegrationAccounts(
+  integration: IntegrationRecord,
+): Promise<RemoteAccountSnapshot[]> {
+  return importAccountsFromIntegration(integration) as Promise<RemoteAccountSnapshot[]>;
 }
 
 export async function pushAccountsToIntegration(

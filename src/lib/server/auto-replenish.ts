@@ -26,6 +26,10 @@ import {
 } from "@/lib/server/db";
 import { pushAccountsToIntegration, readIntegrationRemoteStatus } from "@/lib/server/connectors";
 import type { RemoteStatusSummary } from "@/lib/server/connectors/status";
+import {
+  splitAccountsByIntegrationPresence,
+  verifyPushedAccountsOnIntegration,
+} from "@/lib/server/push-verification";
 
 type RunOptions = {
   force?: boolean;
@@ -167,19 +171,10 @@ function pickCandidateAccounts(
   const untouched = eligible
     .filter((account) => !pushStates.has(account.id))
     .sort((a, b) => sortByIsoAsc(a.createdAt, b.createdAt));
-  const touched = eligible
-    .filter((account) => pushStates.has(account.id))
-    .sort((a, b) =>
-      sortByIsoAsc(
-        pushStates.get(a.id)?.lastPushedAt ?? a.lastPushedAt,
-        pushStates.get(b.id)?.lastPushedAt ?? b.lastPushedAt,
-      ),
-    );
-  const ordered = [...untouched, ...touched];
 
   return {
-    selected: ordered.slice(0, count),
-    totalEligible: ordered.length,
+    selected: untouched.slice(0, count),
+    totalEligible: untouched.length,
   };
 }
 
@@ -364,14 +359,14 @@ export async function runAutoReplenishForIntegration(
       return result;
     }
 
-    const { selected, totalEligible } = pickCandidateAccounts(
+    const { selected: candidates, totalEligible } = pickCandidateAccounts(
       integrationId,
       rule.credentialFilter,
       rule.planFilters,
-      desiredCount,
+      Math.min(desiredCount + rule.maxAccountsPerRun, rule.maxAccountsPerRun * 3),
     );
 
-    if (selected.length === 0) {
+    if (candidates.length === 0) {
       const filterText = buildCandidateFilterText(rule.credentialFilter, rule.planFilters);
       const result: AutoReplenishRunResult = {
         integrationId,
@@ -392,6 +387,36 @@ export async function runAutoReplenishForIntegration(
       throw new Error(result.message);
     }
 
+    const presence = await splitAccountsByIntegrationPresence(integration, candidates);
+    if (presence.present.length > 0) {
+      recordAccountsPushedToIntegration(
+        integrationId,
+        presence.present.map((item) => item.id),
+      );
+      await verifyPushedAccountsOnIntegration(integration, presence.present);
+    }
+
+    const selected = presence.missing.slice(0, desiredCount);
+    if (selected.length === 0) {
+      const result: AutoReplenishRunResult = {
+        integrationId,
+        status: "skipped",
+        message: `已触发自动补号，但候选账号均已存在于中转站，已同步状态并阻止重复推送`,
+        pushed: 0,
+        summary,
+        selectedAccountIds: presence.present.map((item) => item.id),
+      };
+      await persistRunOutcome(rule, startedAt, triggerSource, result);
+      if (triggerSource === "manual") {
+        addActivityLog("auto_replenish_run", "info", "自动补号已跳过", result.message, {
+          integrationId,
+          skippedRemoteDuplicate: presence.present.length,
+        });
+      }
+      updateIntegrationHealth(integrationId, "success", result.message);
+      return result;
+    }
+
     const pushOptions = {
       targetGroups: rule.targetGroups,
       planGroupMap: rule.planGroupMap,
@@ -403,15 +428,29 @@ export async function runAutoReplenishForIntegration(
       integrationId,
       selected.map((item) => item.id),
     );
+    let verificationMessage = "推送后校验未执行";
+    try {
+      const verificationResult = await verifyPushedAccountsOnIntegration(integration, selected);
+      verificationMessage = verificationResult.message;
+    } catch (error) {
+      verificationMessage = `推送后校验失败：${error instanceof Error ? error.message : "未知错误"}`;
+      addActivityLog("account_push_verify", "error", "推送后校验失败", verificationMessage, {
+        integrationId,
+        accountIds: selected.map((item) => item.id),
+      });
+    }
 
     const partialNote =
       selected.length < desiredCount
         ? `，本地仅找到 ${selected.length} 个可推账号`
         : "";
+    const remoteDuplicateNote = presence.present.length
+      ? `，跳过中转站已存在 ${presence.present.length} 个`
+      : "";
     const result: AutoReplenishRunResult = {
       integrationId,
       status: "success",
-      message: `已刷新 ${summary.platform} 状态 ${summary.updatedAt}，已自动补号 ${pushResult.pushed} 个${partialNote}，触发原因：${buildTriggerText(rule, summary, quotaRemaining)}，本地剩余可推 ${Math.max(totalEligible - selected.length, 0)} 个`,
+      message: `已刷新 ${summary.platform} 状态 ${summary.updatedAt}，已自动补号 ${pushResult.pushed} 个${partialNote}${remoteDuplicateNote}，${verificationMessage}，触发原因：${buildTriggerText(rule, summary, quotaRemaining)}，本地剩余未推送可用账号 ${Math.max(totalEligible - selected.length - presence.present.length, 0)} 个`,
       pushed: pushResult.pushed,
       summary,
       selectedAccountIds: selected.map((item) => item.id),

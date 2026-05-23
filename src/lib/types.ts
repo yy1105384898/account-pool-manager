@@ -55,6 +55,20 @@ export type RemoteStatusSummary = {
   }>;
 };
 
+export type RemoteAccountSnapshot = {
+  remoteId?: string | null;
+  email?: string | null;
+  label?: string | null;
+  accountId?: string | null;
+  userId?: string | null;
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  planType?: string | null;
+  status?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
 export type IntegrationRecord = {
   id: string;
   name: string;

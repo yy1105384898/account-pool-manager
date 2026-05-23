@@ -101,6 +101,18 @@ function getDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS accounts_remote_identity_unique
       ON accounts(source_integration_id, remote_id);
 
+    CREATE INDEX IF NOT EXISTS accounts_manual_access_token_idx
+      ON accounts(source_type, access_token);
+
+    CREATE INDEX IF NOT EXISTS accounts_manual_refresh_token_idx
+      ON accounts(source_type, refresh_token);
+
+    CREATE INDEX IF NOT EXISTS accounts_manual_email_idx
+      ON accounts(source_type, email);
+
+    CREATE INDEX IF NOT EXISTS accounts_manual_account_id_idx
+      ON accounts(source_type, account_id);
+
     CREATE TABLE IF NOT EXISTS activity_logs (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -890,10 +902,14 @@ export function createManualAccount(input: ManualAccountInput) {
 export function findManualAccountByCredential(input: {
   accessToken?: string | null;
   refreshToken?: string | null;
+  email?: string | null;
+  accountId?: string | null;
 }) {
   const db = getDb();
   const accessToken = input.accessToken?.trim();
   const refreshToken = input.refreshToken?.trim();
+  const email = input.email?.trim();
+  const accountId = input.accountId?.trim();
 
   if (accessToken) {
     const row = db
@@ -906,6 +922,20 @@ export function findManualAccountByCredential(input: {
     const row = db
       .prepare("SELECT id FROM accounts WHERE source_type = 'manual' AND refresh_token = ? LIMIT 1")
       .get(refreshToken) as { id?: string } | undefined;
+    if (row?.id) return row.id;
+  }
+
+  if (email) {
+    const row = db
+      .prepare("SELECT id FROM accounts WHERE source_type = 'manual' AND lower(email) = lower(?) LIMIT 1")
+      .get(email) as { id?: string } | undefined;
+    if (row?.id) return row.id;
+  }
+
+  if (accountId) {
+    const row = db
+      .prepare("SELECT id FROM accounts WHERE source_type = 'manual' AND account_id = ? LIMIT 1")
+      .get(accountId) as { id?: string } | undefined;
     if (row?.id) return row.id;
   }
 
@@ -965,6 +995,36 @@ export function updateAccountTestResult(
   `).run(
     patch.accessToken ?? existing.accessToken,
     patch.refreshToken !== undefined ? patch.refreshToken : existing.refreshToken,
+    patch.planType !== undefined ? normalizeNullable(patch.planType) : existing.planType,
+    patch.status,
+    patch.remoteStatus,
+    stringifyJson({ ...existing.metadata, ...(patch.metadata ?? {}) }),
+    timestamp,
+    timestamp,
+    id,
+  );
+  return getAccountById(id);
+}
+
+export function updateAccountPushVerification(
+  id: string,
+  patch: {
+    status: AccountStatus;
+    remoteStatus: string;
+    planType?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const existing = getAccountById(id);
+  if (!existing) return null;
+  const db = getDb();
+  const timestamp = nowIso();
+  db.prepare(`
+    UPDATE accounts
+    SET plan_type = ?, status = ?, remote_status = ?, metadata_json = ?,
+        last_status_checked_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
     patch.planType !== undefined ? normalizeNullable(patch.planType) : existing.planType,
     patch.status,
     patch.remoteStatus,
