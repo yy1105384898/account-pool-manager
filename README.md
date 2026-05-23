@@ -44,7 +44,7 @@ docker compose up -d --build
 默认映射端口：
 
 ```text
-3015 -> 3000
+3015 -> account-pool-proxy:80 -> account-pool-manager:3000
 ```
 
 浏览器访问：
@@ -73,6 +73,7 @@ docker compose up -d --build
 
 - 容器继续监听 `3015`
 - 反代转发到 `127.0.0.1:3015`
+- 容器内置 Nginx 反代缓存，只缓存前端静态资源，不缓存页面和 API
 
 ## 连接配置说明
 
