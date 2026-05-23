@@ -2940,7 +2940,6 @@ export default function DashboardClient({ data }: Props) {
                                     检测: {formatCheckMessage(account.lastCheckMessage)}
                                   </p>
                                 ) : null}
-                                {account.modelCount !== null ? <p>模型 {account.modelCount}</p> : null}
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top">

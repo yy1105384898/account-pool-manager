@@ -20,12 +20,6 @@ type ProbeResult = {
 type AccountSnapshot = {
   planType: string | null;
   subscriptionStatus: string | null;
-  quota5hUsedPercent: number | null;
-  quota7dUsedPercent: number | null;
-  requestCount7d: number | null;
-  riskCount: number | null;
-  cost5h: number | null;
-  cost7d: number | null;
   rawSources: string[];
 };
 
@@ -49,7 +43,6 @@ const tokenClients = [
 ];
 
 const accountInfoEndpoints = [
-  { name: "codex_usage", url: "https://chatgpt.com/backend-api/codex/usage" },
   { name: "account_check", url: "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27" },
   { name: "subscriptions", url: "https://chatgpt.com/backend-api/subscriptions" },
   { name: "me", url: "https://chatgpt.com/backend-api/me" },
@@ -68,22 +61,6 @@ function cleanToken(value: string | null | undefined) {
 
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function readNumber(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value.replace("%", ""));
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-}
-
-function normalizePercent(value: unknown) {
-  const number = readNumber(value);
-  if (number === null) return null;
-  const percent = number <= 1 && number >= 0 ? number * 100 : number;
-  return Math.max(0, Math.min(100, Math.round(percent * 10) / 10));
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -123,54 +100,10 @@ function firstStringByKeys(value: unknown, keys: string[]) {
   return matched;
 }
 
-function firstNumberByKeys(value: unknown, keys: string[]) {
-  let matched: number | null = null;
-  walkObjects(value, (item) => {
-    if (matched !== null) return;
-    for (const key of keys) {
-      const direct = readNumber(item[key]);
-      if (direct !== null) {
-        matched = direct;
-        return;
-      }
-    }
-  });
-  return matched;
-}
-
-function percentFromRateLimit(value: unknown, windowNames: string[]) {
-  let matched: number | null = null;
-  walkObjects(value, (item) => {
-    if (matched !== null) return;
-    const windowName =
-      readString(item.window) ??
-      readString(item.window_name) ??
-      readString(item.name) ??
-      readString(item.key);
-    const isTargetWindow = windowName
-      ? windowNames.some((name) => windowName.toLowerCase().includes(name))
-      : false;
-    if (!isTargetWindow) return;
-    matched =
-      normalizePercent(item.used_percent) ??
-      normalizePercent(item.usage_percent) ??
-      normalizePercent(item.percent_used) ??
-      normalizePercent(item.used);
-  });
-  return matched;
-}
-
 function extractSnapshot(results: ProbeResult[]): AccountSnapshot {
   const payloads = results.filter((item) => item.ok).map((item) => item.data);
   const rawSources = results.filter((item) => item.ok).map((item) => item.name);
   const merged = payloads.length === 1 ? payloads[0] : payloads;
-
-  const quota5hUsedPercent =
-    firstNumberByKeys(merged, ["usage_percent_5h", "codex_5h_used_percent", "quota5hUsedPercent"])
-    ?? percentFromRateLimit(merged, ["5h", "primary"]);
-  const quota7dUsedPercent =
-    firstNumberByKeys(merged, ["usage_percent_7d", "codex_7d_used_percent", "quota7dUsedPercent"])
-    ?? percentFromRateLimit(merged, ["7d", "weekly", "secondary"]);
 
   return {
     planType: firstStringByKeys(merged, [
@@ -188,12 +121,6 @@ function extractSnapshot(results: ProbeResult[]): AccountSnapshot {
       "billing_status",
       "status",
     ]),
-    quota5hUsedPercent: normalizePercent(quota5hUsedPercent),
-    quota7dUsedPercent: normalizePercent(quota7dUsedPercent),
-    requestCount7d: firstNumberByKeys(merged, ["request_count_7d", "requests_7d", "num_requests_7d"]),
-    riskCount: firstNumberByKeys(merged, ["risk_count", "riskCount"]),
-    cost5h: firstNumberByKeys(merged, ["cost_5h", "cost5h"]),
-    cost7d: firstNumberByKeys(merged, ["cost_7d", "cost7d"]),
     rawSources,
   };
 }
@@ -296,27 +223,22 @@ function buildSnapshotMetadata(snapshot: AccountSnapshot, message: string, laten
     lastCheckMessage: message,
     lastCheckLatencyMs: latencyMs,
     accountPlanSource: snapshot.rawSources.join(","),
-    modelCount: null,
+    subscriptionStatus: undefined,
+    modelCount: undefined,
+    quota5hUsedPercent: undefined,
+    quota7dUsedPercent: undefined,
+    requestCount7d: undefined,
+    riskCount: undefined,
+    cost5h: undefined,
+    cost7d: undefined,
   };
 
   if (snapshot.subscriptionStatus) metadata.subscriptionStatus = snapshot.subscriptionStatus;
-  if (snapshot.quota5hUsedPercent !== null) metadata.quota5hUsedPercent = snapshot.quota5hUsedPercent;
-  if (snapshot.quota7dUsedPercent !== null) metadata.quota7dUsedPercent = snapshot.quota7dUsedPercent;
-  if (snapshot.requestCount7d !== null) metadata.requestCount7d = snapshot.requestCount7d;
-  if (snapshot.riskCount !== null) metadata.riskCount = snapshot.riskCount;
-  if (snapshot.cost5h !== null) metadata.cost5h = snapshot.cost5h;
-  if (snapshot.cost7d !== null) metadata.cost7d = snapshot.cost7d;
 
   return metadata;
 }
 
-function statusFromSnapshot(snapshot: AccountSnapshot): AccountStatus {
-  if (
-    (snapshot.quota5hUsedPercent !== null && snapshot.quota5hUsedPercent >= 100) ||
-    (snapshot.quota7dUsedPercent !== null && snapshot.quota7dUsedPercent >= 100)
-  ) {
-    return "quota_exhausted";
-  }
+function activeStatus(): AccountStatus {
   return "active";
 }
 
@@ -366,7 +288,14 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
           lastCheckMessage: firstError,
           lastCheckLatencyMs: latencyMs,
           accountPlanSource: "none",
-          modelCount: null,
+          subscriptionStatus: undefined,
+          modelCount: undefined,
+          quota5hUsedPercent: undefined,
+          quota7dUsedPercent: undefined,
+          requestCount7d: undefined,
+          riskCount: undefined,
+          cost5h: undefined,
+          cost7d: undefined,
         },
       });
       persistedFailure = true;
@@ -377,7 +306,7 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
     const message = buildMessage(snapshot);
     const planType = normalizePlanType(snapshot.planType) ?? account.planType;
     updateAccountTestResult(id, {
-      status: statusFromSnapshot(snapshot),
+      status: activeStatus(),
       remoteStatus: snapshot.subscriptionStatus ?? "available",
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
@@ -392,7 +321,18 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
       updateAccountTestResult(id, {
         status: "error",
         remoteStatus: "check_error",
-        metadata: { lastCheckMessage: message, lastCheckLatencyMs: Date.now() - started },
+        metadata: {
+          lastCheckMessage: message,
+          lastCheckLatencyMs: Date.now() - started,
+          subscriptionStatus: undefined,
+          modelCount: undefined,
+          quota5hUsedPercent: undefined,
+          quota7dUsedPercent: undefined,
+          requestCount7d: undefined,
+          riskCount: undefined,
+          cost5h: undefined,
+          cost7d: undefined,
+        },
       });
       if (!options.silent) addActivityLog("account_test", "error", "账号检测失败", message, { accountId: id });
     }
