@@ -109,7 +109,11 @@ const dangerButton =
 const iconActionButton =
   "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-200/14 bg-white/[0.045] text-slate-300 transition hover:border-cyan-200/35 hover:bg-cyan-300/10 hover:text-cyan-50 disabled:opacity-55";
 const dangerIconActionButton =
-  "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-300/22 bg-rose-400/10 text-rose-100 transition hover:bg-rose-400/18 disabled:opacity-55";
+  "inline-flex h-9 w-9 items-center justify-center rounded-[0.95rem] border border-rose-300/20 bg-rose-400/10 text-rose-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-rose-400/18 hover:shadow-[0_0_24px_rgba(244,63,94,0.14)] active:scale-95 disabled:opacity-45";
+const inventoryActionButton =
+  "min-h-[52px] w-full justify-center rounded-[1.2rem] px-4 py-3 text-sm font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_16px_36px_rgba(2,6,23,0.18)]";
+const inventoryActionPanel =
+  "rounded-[1.45rem] border border-cyan-200/12 bg-slate-950/38 p-3 backdrop-blur-sm";
 const quotaCriticalRemainingPercent = 5;
 
 const importModeLabels: Record<"refresh" | "access" | "apiKey" | "oauth" | "json", string> = {
@@ -2712,8 +2716,8 @@ export default function DashboardClient({ data }: Props) {
 
             {activeView === "inventory" ? (
               <section id="inventory" className={panelClass}>
-              <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
-                <div>
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0 flex-1">
                   <p className={sectionTitleClass}>Pool</p>
                   <h2 className="mt-2 text-2xl font-semibold tracking-[-0.055em] text-white">
                     库存列表
@@ -2722,7 +2726,40 @@ export default function DashboardClient({ data }: Props) {
                     当前显示 {accounts.length} / {data.accounts.length} 个账号，已选 {selectedIds.length} 个。后台会定时检测套餐和可用状态。
                   </p>
                 </div>
-                <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_150px_150px_150px_160px]">
+                <div className={clsx(inventoryActionPanel, "w-full xl:w-[220px] xl:shrink-0")}>
+                  <div className="grid gap-2">
+                    <button
+                      onClick={allVisibleSelected ? clearVisibleSelection : selectAllVisible}
+                      className={clsx(secondaryButton, inventoryActionButton)}
+                    >
+                      {allVisibleSelected ? "取消全选" : "全选当前"}
+                    </button>
+                    <button
+                      onClick={() => updateSelectedAccountStatus("active")}
+                      disabled={isPending || selectedIds.length === 0}
+                      className={clsx(secondaryButton, inventoryActionButton)}
+                    >
+                      启用已选
+                    </button>
+                    <button
+                      onClick={() => updateSelectedAccountStatus("disabled")}
+                      disabled={isPending || selectedIds.length === 0}
+                      className={clsx(secondaryButton, inventoryActionButton)}
+                    >
+                      停用已选
+                    </button>
+                    <button
+                      onClick={deleteSelectedAccounts}
+                      disabled={isPending || selectedIds.length === 0}
+                      className={clsx(dangerButton, inventoryActionButton, "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_18px_38px_rgba(127,29,29,0.22)]")}
+                    >
+                      删除已选
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(220px,1fr)_150px_150px_150px_160px]">
                   <input
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
@@ -2768,21 +2805,6 @@ export default function DashboardClient({ data }: Props) {
                     <option value="updated_desc">最近更新优先</option>
                   </select>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={allVisibleSelected ? clearVisibleSelection : selectAllVisible} className={secondaryButton}>
-                    {allVisibleSelected ? "取消全选" : "全选当前"}
-                  </button>
-                  <button onClick={() => updateSelectedAccountStatus("active")} disabled={isPending || selectedIds.length === 0} className={secondaryButton}>
-                    启用已选
-                  </button>
-                  <button onClick={() => updateSelectedAccountStatus("disabled")} disabled={isPending || selectedIds.length === 0} className={secondaryButton}>
-                    停用已选
-                  </button>
-                  <button onClick={deleteSelectedAccounts} disabled={isPending || selectedIds.length === 0} className={dangerButton}>
-                    删除已选
-                  </button>
-                </div>
-              </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/34 p-3">
                 <span className="mr-1 text-xs text-slate-500">
