@@ -96,6 +96,8 @@ function toAccountStatus(remoteStatus?: string | null): AccountStatus {
   const normalized = normalizeRemoteStatus(remoteStatus);
   if (normalized === "正常") return "active";
   switch (normalized.toLowerCase()) {
+    case "unauthorized":
+    case "forbidden":
     case "disabled":
     case "inactive":
     case "expired":

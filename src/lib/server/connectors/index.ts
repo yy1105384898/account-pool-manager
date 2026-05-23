@@ -11,6 +11,7 @@ import {
   importFromCodexProxy,
   pushToCpa,
   pushToCodexProxy,
+  readCodexProxyAccountsSnapshot,
   readCodexProxyAccountTemplate,
   readCpaStatus,
   readCodexProxyStatus,
@@ -48,6 +49,9 @@ export async function importAccountsFromIntegration(integration: IntegrationReco
 export async function readIntegrationAccounts(
   integration: IntegrationRecord,
 ): Promise<RemoteAccountSnapshot[]> {
+  if (integration.type === "codexproxy") {
+    return readCodexProxyAccountsSnapshot(integration);
+  }
   return importAccountsFromIntegration(integration) as Promise<RemoteAccountSnapshot[]>;
 }
 

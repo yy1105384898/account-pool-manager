@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { AccountRecord, IntegrationPushOptions, IntegrationRecord } from "@/lib/types";
+import type {
+  AccountRecord,
+  IntegrationPushOptions,
+  IntegrationRecord,
+  RemoteAccountSnapshot,
+} from "@/lib/types";
 import { fetchJson, resolveAccountPushGroups } from "@/lib/server/connectors/shared";
 import {
   createDistribution,
@@ -148,12 +153,13 @@ function readTemplateProxy(record: Record<string, unknown>) {
 
 function codexProxyRemoteStatus(item: CodexProxyAdminAccount) {
   if (item.enabled === false) return "disabled";
+  if (isCodexProxyBanned(item)) return "banned";
+  if (isCodexProxyRateLimited(item)) return "quota_exhausted";
   return text(item.status) ?? "unknown";
 }
 
 function codexProxyStatusLabel(item: CodexProxyAdminAccount) {
-  if (item.enabled === false) return "disabled";
-  return normalizeRemoteStatus(item.status);
+  return normalizeRemoteStatus(codexProxyRemoteStatus(item));
 }
 
 function codexProxyTypeLabel(item: CodexProxyAdminAccount) {
@@ -169,6 +175,31 @@ function resolveRefreshToken(account: AccountRecord) {
     return accessToken.slice("refresh:".length).trim() || null;
   }
   return null;
+}
+
+function isCodexProxyBanned(item: CodexProxyAdminAccount) {
+  const values = [item.status, item.health_tier, item.cooldown_reason]
+    .map((value) => text(value)?.toLowerCase())
+    .filter(Boolean);
+  return values.some((value) =>
+    value === "unauthorized" ||
+    value === "banned" ||
+    value === "forbidden" ||
+    value === "blocked" ||
+    value?.includes("ban"),
+  );
+}
+
+function isCodexProxyRateLimited(item: CodexProxyAdminAccount) {
+  const values = [item.status, item.cooldown_reason, item.health_tier]
+    .map((value) => text(value)?.toLowerCase())
+    .filter(Boolean);
+  return values.some((value) =>
+    value === "rate_limited" ||
+    value === "rate-limited" ||
+    value === "rate_limit" ||
+    value?.includes("rate"),
+  );
 }
 
 async function loadCodexProxyAdminHealth(integration: IntegrationRecord) {
@@ -251,6 +282,54 @@ export async function importFromCodexProxy(integration: IntegrationRecord) {
   });
 }
 
+export async function readCodexProxyAccountsSnapshot(
+  integration: IntegrationRecord,
+): Promise<RemoteAccountSnapshot[]> {
+  const [statusAccounts, exportAccounts] = await Promise.all([
+    loadCodexProxyAdminAccounts(integration),
+    loadCodexProxyExportAccounts(integration).catch(() => []),
+  ]);
+  const exportByEmail = new Map<string, CodexProxyExportAccount>();
+  const exportByAccountId = new Map<string, CodexProxyExportAccount>();
+
+  for (const item of exportAccounts) {
+    const email = codexProxyAccountKey(item.email);
+    const accountId = codexProxyAccountKey(item.account_id);
+    if (email) exportByEmail.set(email, item);
+    if (accountId) exportByAccountId.set(accountId, item);
+  }
+
+  return statusAccounts.map((item) => {
+    const email = text(item.email ?? item.name);
+    const idText = text(item.id === undefined || item.id === null ? null : String(item.id));
+    const matchedExport =
+      (email ? exportByEmail.get(email.toLowerCase()) : undefined) ??
+      (idText ? exportByAccountId.get(idText.toLowerCase()) : undefined);
+    const refreshToken = text(matchedExport?.refresh_token);
+    const accessToken = text(matchedExport?.access_token) ?? (refreshToken ? `refresh:${refreshToken}` : null);
+
+    return {
+      remoteId: idText ?? text(matchedExport?.account_id) ?? email,
+      email,
+      label: text(item.name) ?? email,
+      accountId: text(matchedExport?.account_id) ?? idText,
+      userId: null,
+      accessToken,
+      refreshToken,
+      planType: text(item.plan_type) ?? text(matchedExport?.plan_type),
+      status: codexProxyRemoteStatus(item),
+      metadata: {
+        platform: "codexproxy",
+        enabled: item.enabled ?? null,
+        locked: item.locked ?? null,
+        healthTier: text(item.health_tier),
+        cooldownReason: text(item.cooldown_reason),
+        rawStatus: text(item.status),
+      },
+    };
+  });
+}
+
 export async function readCodexProxyStatus(integration: IntegrationRecord): Promise<RemoteStatusSummary> {
   const started = Date.now();
   const [health, accounts] = await Promise.all([
@@ -260,7 +339,7 @@ export async function readCodexProxyStatus(integration: IntegrationRecord): Prom
 
   const statusValues = accounts.map(codexProxyStatusLabel);
   const fallbackNormal = accounts.filter((item) =>
-    item.enabled !== false && isNormalRemoteStatus(item.status),
+    item.enabled !== false && isNormalRemoteStatus(codexProxyRemoteStatus(item)),
   ).length;
   const totalAccounts = accounts.length || (typeof health.total === "number" ? health.total : 0);
   const normalAccounts =
