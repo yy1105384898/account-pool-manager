@@ -56,6 +56,15 @@ type CodexProxyAdminAccountList = {
   accounts?: CodexProxyAdminAccount[];
 };
 
+type CodexProxyAccountGroup = {
+  id?: number | string;
+  name?: string | null;
+};
+
+type CodexProxyAccountGroupList = {
+  groups?: CodexProxyAccountGroup[];
+};
+
 type CodexProxyExportAccount = {
   type?: string | null;
   email?: string | null;
@@ -202,6 +211,67 @@ function isCodexProxyRateLimited(item: CodexProxyAdminAccount) {
   );
 }
 
+function resolvePlanTag(account: AccountRecord) {
+  const normalized = account.planType?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("plus")) return "Plus";
+  if (normalized.includes("pro")) return "Pro";
+  if (normalized.includes("free")) return "Free";
+  return account.planType?.trim() || null;
+}
+
+function resolvePlanTypeValue(account: AccountRecord) {
+  const tag = resolvePlanTag(account);
+  return tag ? tag.toLowerCase() : account.planType?.trim() || undefined;
+}
+
+async function resolveCodexProxyGroupIds(
+  integration: IntegrationRecord,
+  groupNames: string[],
+) {
+  if (groupNames.length === 0) return [] as number[];
+  const groups = await loadCodexProxyAccountGroups(integration).catch(() => []);
+  const nameToId = new Map(
+    groups.flatMap((group) => {
+      const name = text(group.name)?.toLowerCase();
+      const id = Number(group.id);
+      return name && Number.isFinite(id) ? [[name, id] as const] : [];
+    }),
+  );
+  return groupNames.flatMap((name) => {
+    const id = nameToId.get(name.trim().toLowerCase());
+    return id ? [id] : [];
+  });
+}
+
+function buildCodexProxyPlacementPayload(
+  account: AccountRecord,
+  groupNames: string[],
+  groupIds: number[],
+  pushNotes?: string | null,
+) {
+  const planTag = resolvePlanTag(account);
+  const tags = planTag ? [planTag] : [];
+  const planType = resolvePlanTypeValue(account);
+
+  return {
+    plan_type: planType,
+    tag: tags[0],
+    tags: tags.length ? tags : undefined,
+    tag_name: tags[0],
+    tag_names: tags.length ? tags : undefined,
+    group: groupNames[0],
+    groups: groupNames.length ? groupNames : undefined,
+    group_name: groupNames[0],
+    group_names: groupNames.length ? groupNames : undefined,
+    group_id: groupIds[0],
+    group_ids: groupIds.length ? groupIds : undefined,
+    account_group_id: groupIds[0],
+    account_group_ids: groupIds.length ? groupIds : undefined,
+    notes: pushNotes?.trim() || undefined,
+  };
+}
+
 async function loadCodexProxyAdminHealth(integration: IntegrationRecord) {
   return fetchJson<CodexProxyAdminHealth>(integration, "/api/admin/health");
 }
@@ -209,6 +279,14 @@ async function loadCodexProxyAdminHealth(integration: IntegrationRecord) {
 async function loadCodexProxyAdminAccounts(integration: IntegrationRecord) {
   const payload = await fetchJson<CodexProxyAdminAccountList>(integration, "/api/admin/accounts");
   return Array.isArray(payload.accounts) ? payload.accounts : [];
+}
+
+async function loadCodexProxyAccountGroups(integration: IntegrationRecord) {
+  const payload = await fetchJson<CodexProxyAccountGroupList>(
+    integration,
+    "/api/admin/account-groups",
+  );
+  return Array.isArray(payload.groups) ? payload.groups : [];
 }
 
 async function loadCodexProxyExportAccounts(integration: IntegrationRecord) {
@@ -383,6 +461,13 @@ export async function pushToCodexProxy(
     const refreshToken = resolveRefreshToken(item);
     const name = item.label ?? item.email ?? item.accountId ?? undefined;
     const pushGroups = resolveAccountPushGroups(item, options, template?.groups ?? []);
+    const pushGroupIds = await resolveCodexProxyGroupIds(integration, pushGroups);
+    const placement = buildCodexProxyPlacementPayload(
+      item,
+      pushGroups,
+      pushGroupIds,
+      options?.pushNotes,
+    );
 
     if (refreshToken) {
       await fetchJson(integration, "/api/admin/accounts", {
@@ -391,11 +476,7 @@ export async function pushToCodexProxy(
           name,
           refresh_token: refreshToken,
           proxy_url: templateProxy,
-          group: pushGroups[0],
-          groups: pushGroups.length ? pushGroups : undefined,
-          group_name: pushGroups[0],
-          group_names: pushGroups.length ? pushGroups : undefined,
-          notes: options?.pushNotes?.trim() || undefined,
+          ...placement,
         },
       });
       pushed += 1;
@@ -413,11 +494,7 @@ export async function pushToCodexProxy(
         name,
         access_token: accessToken,
         proxy_url: templateProxy,
-        group: pushGroups[0],
-        groups: pushGroups.length ? pushGroups : undefined,
-        group_name: pushGroups[0],
-        group_names: pushGroups.length ? pushGroups : undefined,
-        notes: options?.pushNotes?.trim() || undefined,
+        ...placement,
       },
     });
     pushed += 1;
