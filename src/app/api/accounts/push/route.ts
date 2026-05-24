@@ -10,7 +10,10 @@ import {
   recordAccountsPushedToIntegration,
 } from "@/lib/server/db";
 import { pushRequestSchema } from "@/lib/types";
-import { pushAccountsToIntegration } from "@/lib/server/connectors";
+import {
+  ensureAccountsPlacementOnIntegration,
+  pushAccountsToIntegration,
+} from "@/lib/server/connectors";
 import {
   splitAccountsByIntegrationPresence,
   verifyPushedAccountsOnIntegration,
@@ -29,6 +32,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "未找到可推送账号" }, { status: 404 });
     }
 
+    const pushOptions = {
+      targetGroups: payload.targetGroups ?? [],
+      planGroupMap: payload.planGroupMap ?? {},
+      cloneAccountId: payload.cloneAccountId || null,
+      pushNotes: payload.pushNotes || null,
+    };
     const pushedState = new Set(
       listPushedAccountStatesByIntegration(integration.id).map((item) =>
         String(item.account_id),
@@ -43,11 +52,16 @@ export async function POST(request: Request) {
 
     if (locallyPushableAccounts.length === 0) {
       if (duplicateAccounts.length > 0) {
+        const placementResult = await ensureAccountsPlacementOnIntegration(
+          integration,
+          duplicateAccounts,
+          pushOptions,
+        );
         const verificationResult = await verifyPushedAccountsOnIntegration(
           integration,
           duplicateAccounts,
         );
-        const message = `所选账号已推送过 ${integration.name}，未重复推送；已同步中转站状态，${verificationResult.message}`;
+        const message = `所选账号已推送过 ${integration.name}，未重复推送；${placementResult.message}，已同步中转站状态，${verificationResult.message}`;
         addActivityLog("account_push", "info", "账号状态已同步", message, {
           integrationId: integration.id,
           skippedDuplicate: duplicateCount,
@@ -71,6 +85,11 @@ export async function POST(request: Request) {
         integration.id,
         presence.present.map((item) => item.id),
       );
+      await ensureAccountsPlacementOnIntegration(
+        integration,
+        presence.present,
+        pushOptions,
+      );
       await verifyPushedAccountsOnIntegration(integration, presence.present);
     }
 
@@ -85,11 +104,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, result: { pushed: 0, message }, message });
     }
 
-    const result = await pushAccountsToIntegration(integration, pushableAccounts, {
-      targetGroups: payload.targetGroups ?? [],
-      planGroupMap: payload.planGroupMap ?? {},
-      pushNotes: payload.pushNotes || null,
-    });
+    const result = await pushAccountsToIntegration(integration, pushableAccounts, pushOptions);
     markAccountsPushed(pushableAccounts.map((item) => item.id));
     recordAccountsPushedToIntegration(
       integration.id,

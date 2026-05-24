@@ -24,7 +24,11 @@ import {
   updateIntegrationHealth,
   updateIntegrationRemoteStatusSummary,
 } from "@/lib/server/db";
-import { pushAccountsToIntegration, readIntegrationRemoteStatus } from "@/lib/server/connectors";
+import {
+  ensureAccountsPlacementOnIntegration,
+  pushAccountsToIntegration,
+  readIntegrationRemoteStatus,
+} from "@/lib/server/connectors";
 import type { RemoteStatusSummary } from "@/lib/server/connectors/status";
 import {
   splitAccountsByIntegrationPresence,
@@ -388,10 +392,21 @@ export async function runAutoReplenishForIntegration(
     }
 
     const presence = await splitAccountsByIntegrationPresence(integration, candidates);
+    const pushOptions = {
+      targetGroups: rule.targetGroups,
+      planGroupMap: rule.planGroupMap,
+      cloneAccountId: rule.cloneAccountId,
+      pushNotes: rule.pushNotes,
+    };
     if (presence.present.length > 0) {
       recordAccountsPushedToIntegration(
         integrationId,
         presence.present.map((item) => item.id),
+      );
+      await ensureAccountsPlacementOnIntegration(
+        integration,
+        presence.present,
+        pushOptions,
       );
       await verifyPushedAccountsOnIntegration(integration, presence.present);
     }
@@ -417,11 +432,6 @@ export async function runAutoReplenishForIntegration(
       return result;
     }
 
-    const pushOptions = {
-      targetGroups: rule.targetGroups,
-      planGroupMap: rule.planGroupMap,
-      pushNotes: rule.pushNotes,
-    };
     const pushResult = await pushAccountsToIntegration(integration, selected, pushOptions);
     markAccountsPushed(selected.map((item) => item.id));
     recordAccountsPushedToIntegration(

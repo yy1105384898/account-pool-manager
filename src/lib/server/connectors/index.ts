@@ -9,6 +9,7 @@ import type {
 import {
   importFromCpa,
   importFromCodexProxy,
+  ensureCodexProxyAccountsPlacement,
   pushToCpa,
   pushToCodexProxy,
   readCodexProxyAccountsSnapshot,
@@ -67,6 +68,20 @@ export async function pushAccountsToIntegration(
     return pushToCpa(integration, accounts, options);
   }
   return pushToSub2Api(integration, accounts, options);
+}
+
+export async function ensureAccountsPlacementOnIntegration(
+  integration: IntegrationRecord,
+  accounts: AccountRecord[],
+  options?: IntegrationPushOptions,
+) {
+  if (integration.type === "codexproxy") {
+    return ensureCodexProxyAccountsPlacement(integration, accounts, options);
+  }
+  return {
+    updated: 0,
+    message: "当前中转站无需补写标签/分组",
+  };
 }
 
 export async function readIntegrationRemoteStatus(integration: IntegrationRecord) {

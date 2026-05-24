@@ -47,6 +47,8 @@ type CodexProxyAdminAccount = {
   health_tier?: string | null;
   usage_percent_5h?: number | string | null;
   usage_percent_7d?: number | string | null;
+  tags?: string[] | null;
+  group_ids?: Array<number | string> | null;
   enabled?: boolean | null;
   locked?: boolean | null;
   at_only?: boolean | null;
@@ -145,6 +147,41 @@ function matchesTemplateId(record: Record<string, unknown>, target: string) {
   });
 }
 
+function accountIdentityKeys(account: AccountRecord) {
+  return [account.email, account.label, account.accountId, account.remoteId, account.userId]
+    .map(codexProxyAccountKey)
+    .filter((value): value is string => Boolean(value));
+}
+
+function matchesAccountIdentity(record: CodexProxyAdminAccount, account: AccountRecord) {
+  const keys = new Set(accountIdentityKeys(account));
+  if (keys.size === 0) return false;
+  return [record.email, record.name, record.id === undefined || record.id === null ? null : String(record.id)]
+    .map(codexProxyAccountKey)
+    .some((value) => value ? keys.has(value) : false);
+}
+
+function createdAccountId(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  const candidates = [
+    record.id,
+    record.account && typeof record.account === "object"
+      ? (record.account as Record<string, unknown>).id
+      : null,
+    record.data && typeof record.data === "object"
+      ? (record.data as Record<string, unknown>).id
+      : null,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" || typeof value === "number") {
+      const normalized = String(value).trim();
+      if (normalized) return normalized;
+    }
+  }
+  return null;
+}
+
 function readTemplateGroups(record: Record<string, unknown>) {
   const value = record.groups ?? record.group_names ?? record.groupNames ?? record.group ?? record.group_name;
   if (Array.isArray(value)) {
@@ -230,7 +267,7 @@ async function resolveCodexProxyGroupIds(
   groupNames: string[],
 ) {
   if (groupNames.length === 0) return [] as number[];
-  const groups = await loadCodexProxyAccountGroups(integration).catch(() => []);
+  const groups = await loadCodexProxyAccountGroups(integration);
   const nameToId = new Map(
     groups.flatMap((group) => {
       const name = text(group.name)?.toLowerCase();
@@ -238,10 +275,16 @@ async function resolveCodexProxyGroupIds(
       return name && Number.isFinite(id) ? [[name, id] as const] : [];
     }),
   );
-  return groupNames.flatMap((name) => {
+  const missing: string[] = [];
+  const ids = groupNames.flatMap((name) => {
     const id = nameToId.get(name.trim().toLowerCase());
+    if (!id) missing.push(name);
     return id ? [id] : [];
   });
+  if (missing.length > 0) {
+    throw new Error(`codexproxy 缺少账号分组：${missing.join("，")}，请先在中转站创建同名分组`);
+  }
+  return [...new Set(ids)];
 }
 
 function buildCodexProxyPlacementPayload(
@@ -270,6 +313,56 @@ function buildCodexProxyPlacementPayload(
     account_group_ids: groupIds.length ? groupIds : undefined,
     notes: pushNotes?.trim() || undefined,
   };
+}
+
+async function findCodexProxyRemoteAccountId(
+  integration: IntegrationRecord,
+  account: AccountRecord,
+  fallbackPayload?: unknown,
+) {
+  const directId = createdAccountId(fallbackPayload);
+  if (directId) return directId;
+
+  const accounts = await loadCodexProxyAdminAccounts(integration);
+  const matched = accounts.find((item) => matchesAccountIdentity(item, account));
+  if (matched?.id !== undefined && matched.id !== null) {
+    return String(matched.id);
+  }
+  return null;
+}
+
+async function applyCodexProxyAccountPlacement(
+  integration: IntegrationRecord,
+  account: AccountRecord,
+  options?: IntegrationPushOptions,
+  fallbackPayload?: unknown,
+  fallbackGroups: string[] = [],
+) {
+  const pushGroups = resolveAccountPushGroups(account, options, fallbackGroups);
+  const pushGroupIds = await resolveCodexProxyGroupIds(integration, pushGroups);
+  const placement = buildCodexProxyPlacementPayload(
+    account,
+    pushGroups,
+    pushGroupIds,
+    options?.pushNotes,
+  );
+  const tags = Array.isArray(placement.tags) ? placement.tags : [];
+  const groupIds = Array.isArray(placement.group_ids) ? placement.group_ids : [];
+  if (tags.length === 0 && groupIds.length === 0) return false;
+
+  const remoteId = await findCodexProxyRemoteAccountId(integration, account, fallbackPayload);
+  if (!remoteId) {
+    throw new Error(`codexproxy 未找到账号 ${account.email ?? account.label ?? account.id}，无法设置标签和分组`);
+  }
+
+  await fetchJson(integration, `/api/admin/accounts/${encodeURIComponent(remoteId)}/scheduler`, {
+    method: "PATCH",
+    body: {
+      tags,
+      group_ids: groupIds,
+    },
+  });
+  return true;
 }
 
 async function loadCodexProxyAdminHealth(integration: IntegrationRecord) {
@@ -470,7 +563,7 @@ export async function pushToCodexProxy(
     );
 
     if (refreshToken) {
-      await fetchJson(integration, "/api/admin/accounts", {
+      const created = await fetchJson(integration, "/api/admin/accounts", {
         method: "POST",
         body: {
           name,
@@ -479,6 +572,13 @@ export async function pushToCodexProxy(
           ...placement,
         },
       });
+      await applyCodexProxyAccountPlacement(
+        integration,
+        item,
+        options,
+        created,
+        template?.groups ?? [],
+      );
       pushed += 1;
       continue;
     }
@@ -488,7 +588,7 @@ export async function pushToCodexProxy(
       throw new Error(`账号 ${item.label ?? item.email ?? item.id} 缺少可推送的 access token`);
     }
 
-    await fetchJson(integration, "/api/admin/accounts/at", {
+    const created = await fetchJson(integration, "/api/admin/accounts/at", {
       method: "POST",
       body: {
         name,
@@ -497,12 +597,46 @@ export async function pushToCodexProxy(
         ...placement,
       },
     });
+    await applyCodexProxyAccountPlacement(
+      integration,
+      item,
+      options,
+      created,
+      template?.groups ?? [],
+    );
     pushed += 1;
   }
 
   return {
     pushed,
     message: `已推送 ${pushed} 个账号到 codexproxy`,
+  };
+}
+
+export async function ensureCodexProxyAccountsPlacement(
+  integration: IntegrationRecord,
+  accounts: AccountRecord[],
+  options?: IntegrationPushOptions,
+) {
+  let updated = 0;
+  const template = options?.cloneAccountId?.trim()
+    ? await readCodexProxyAccountTemplate(integration, options.cloneAccountId)
+    : null;
+
+  for (const account of accounts) {
+    const changed = await applyCodexProxyAccountPlacement(
+      integration,
+      account,
+      options,
+      undefined,
+      template?.groups ?? [],
+    );
+    if (changed) updated += 1;
+  }
+
+  return {
+    updated,
+    message: `已补写 codexproxy 标签/分组 ${updated} 个`,
   };
 }
 

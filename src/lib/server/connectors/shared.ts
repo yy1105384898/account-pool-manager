@@ -3,7 +3,7 @@ import "server-only";
 import type { AccountRecord, IntegrationPushOptions, IntegrationRecord, PlanGroupMap } from "@/lib/types";
 
 type FetchOptions = {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   headers?: Record<string, string>;
 };
