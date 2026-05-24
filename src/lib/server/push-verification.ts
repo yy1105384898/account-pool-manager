@@ -163,7 +163,7 @@ export async function verifyPushedAccountsOnIntegration(
     updateAccountPushVerification(account.id, {
       status: accountStatus,
       remoteStatus,
-      planType: matched.planType,
+      planType: matched.planType?.trim() ? matched.planType : undefined,
       metadata: {
         lastPushCheckIntegrationId: integration.id,
         lastPushCheckIntegrationName: integration.name,

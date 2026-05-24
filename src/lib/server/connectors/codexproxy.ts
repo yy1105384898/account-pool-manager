@@ -6,7 +6,12 @@ import type {
   IntegrationRecord,
   RemoteAccountSnapshot,
 } from "@/lib/types";
-import { fetchJson, resolveAccountPushGroups } from "@/lib/server/connectors/shared";
+import {
+  authHeaders,
+  buildUrl,
+  fetchJson,
+  resolveAccountPushGroups,
+} from "@/lib/server/connectors/shared";
 import {
   createDistribution,
   isNormalRemoteStatus,
@@ -260,6 +265,59 @@ function resolvePlanTag(account: AccountRecord) {
 function resolvePlanTypeValue(account: AccountRecord) {
   const tag = resolvePlanTag(account);
   return tag ? tag.toLowerCase() : account.planType?.trim() || undefined;
+}
+
+function readMetadataText(account: AccountRecord, key: string) {
+  const value = account.metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function buildCodexProxyImportAccount(account: AccountRecord) {
+  const planType = resolvePlanTypeValue(account);
+  const accountId = account.accountId?.trim() || account.remoteId?.trim() || undefined;
+  const email = account.email?.trim() || undefined;
+  return {
+    name: account.label?.trim() || email || accountId || undefined,
+    email,
+    access_token: account.accessToken.trim(),
+    refresh_token: account.refreshToken?.trim() || undefined,
+    account_id: accountId,
+    chatgpt_account_id: accountId,
+    plan_type: planType,
+    expires_at: readMetadataText(account, "expiresAt") ?? readMetadataText(account, "expired"),
+    codex_5h_used_percent: account.metadata.quota5hUsedPercent,
+    codex_7d_used_percent: account.metadata.quota7dUsedPercent,
+  };
+}
+
+async function importCodexProxyAccessAccount(
+  integration: IntegrationRecord,
+  account: AccountRecord,
+  proxyUrl: string,
+) {
+  const form = new FormData();
+  form.set("format", "json_at");
+  form.set("proxy_url", proxyUrl);
+  form.set(
+    "file",
+    new Blob([JSON.stringify([buildCodexProxyImportAccount(account)])], {
+      type: "application/json",
+    }),
+    "account.json",
+  );
+
+  const response = await fetch(buildUrl(integration.baseUrl, "/api/admin/accounts/import"), {
+    method: "POST",
+    headers: authHeaders(integration),
+    body: form,
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 200)}`);
+  }
+  return { raw: text };
 }
 
 async function resolveCodexProxyGroupIds(
@@ -588,15 +646,14 @@ export async function pushToCodexProxy(
       throw new Error(`账号 ${item.label ?? item.email ?? item.id} 缺少可推送的 access token`);
     }
 
-    const created = await fetchJson(integration, "/api/admin/accounts/at", {
-      method: "POST",
-      body: {
-        name,
-        access_token: accessToken,
-        proxy_url: templateProxy,
-        ...placement,
+    const created = await importCodexProxyAccessAccount(
+      integration,
+      {
+        ...item,
+        accessToken,
       },
-    });
+      templateProxy,
+    );
     await applyCodexProxyAccountPlacement(
       integration,
       item,
