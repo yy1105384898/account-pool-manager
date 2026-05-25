@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import {
   addActivityLog,
+  getAccountsByIds,
   getIntegrationById,
+  listPushedAccountStatesByIntegration,
   updateIntegrationHealth,
   updateIntegrationRemoteStatusSummary,
 } from "@/lib/server/db";
-import { readIntegrationRemoteStatus } from "@/lib/server/connectors";
+import { probeIntegrationAccounts, readIntegrationRemoteStatus } from "@/lib/server/connectors";
+import { verifyPushedAccountsOnIntegration } from "@/lib/server/push-verification";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -20,6 +23,15 @@ export async function POST(_: Request, context: RouteContext) {
   }
 
   try {
+    const pushedAccounts = getAccountsByIds(
+      listPushedAccountStatesByIntegration(integration.id).map((item) =>
+        String(item.account_id),
+      ),
+    );
+    const probe = await probeIntegrationAccounts(integration);
+    if (pushedAccounts.length > 0) {
+      await verifyPushedAccountsOnIntegration(integration, pushedAccounts);
+    }
     const summary = await readIntegrationRemoteStatus(integration);
     updateIntegrationRemoteStatusSummary(integration.id, summary);
     updateIntegrationHealth(integration.id, "success", `读取成功，远端账号 ${summary.totalAccounts} 个`);
@@ -27,7 +39,7 @@ export async function POST(_: Request, context: RouteContext) {
       "integration_status",
       "success",
       "远端状态已刷新",
-      `${integration.name}: 账号 ${summary.totalAccounts}，正常 ${summary.normalAccounts}`,
+      `${integration.name}: ${probe.message}；账号 ${summary.totalAccounts}，正常 ${summary.normalAccounts}`,
       { integrationId: id, summary },
     );
     revalidatePath("/");

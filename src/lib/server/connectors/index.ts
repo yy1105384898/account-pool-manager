@@ -10,6 +10,7 @@ import {
   importFromCpa,
   importFromCodexProxy,
   ensureCodexProxyAccountsPlacement,
+  probeCodexProxyAccounts,
   pushToCpa,
   pushToCodexProxy,
   readCodexProxyAccountsSnapshot,
@@ -81,6 +82,19 @@ export async function ensureAccountsPlacementOnIntegration(
   return {
     updated: 0,
     message: "当前中转站无需补写标签/分组",
+  };
+}
+
+export async function probeIntegrationAccounts(
+  integration: IntegrationRecord,
+  accounts?: AccountRecord[],
+) {
+  if (integration.type === "codexproxy") {
+    return probeCodexProxyAccounts(integration, accounts);
+  }
+  return {
+    probed: 0,
+    message: "当前中转站未提供 Codex 主动检测接口",
   };
 }
 

@@ -11,6 +11,7 @@ import type {
 import {
   addActivityLog,
   addAutoReplenishRun,
+  getAccountsByIds,
   getAutoReplenishRuleByIntegrationId,
   getIntegrationById,
   listAccounts,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/server/db";
 import {
   ensureAccountsPlacementOnIntegration,
+  probeIntegrationAccounts,
   pushAccountsToIntegration,
   readIntegrationRemoteStatus,
 } from "@/lib/server/connectors";
@@ -280,6 +282,15 @@ export async function runAutoReplenishForIntegration(
   const triggerSource = options.triggerSource ?? "manual";
 
   try {
+    const pushedAccounts = getAccountsByIds(
+      listPushedAccountStatesByIntegration(integrationId).map((item) =>
+        String(item.account_id),
+      ),
+    );
+    await probeIntegrationAccounts(integration);
+    if (pushedAccounts.length > 0) {
+      await verifyPushedAccountsOnIntegration(integration, pushedAccounts);
+    }
     const summary = await readIntegrationRemoteStatus(integration);
     updateIntegrationRemoteStatusSummary(integrationId, summary);
     const quotaRemaining = read5hRemainingPercent(summary);
@@ -408,6 +419,7 @@ export async function runAutoReplenishForIntegration(
         presence.present,
         pushOptions,
       );
+      await probeIntegrationAccounts(integration, presence.present);
       await verifyPushedAccountsOnIntegration(integration, presence.present);
     }
 
@@ -440,6 +452,7 @@ export async function runAutoReplenishForIntegration(
     );
     let verificationMessage = "推送后校验未执行";
     try {
+      await probeIntegrationAccounts(integration, selected);
       const verificationResult = await verifyPushedAccountsOnIntegration(integration, selected);
       verificationMessage = verificationResult.message;
     } catch (error) {

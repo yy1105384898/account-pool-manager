@@ -12,6 +12,7 @@ import {
 import { pushRequestSchema } from "@/lib/types";
 import {
   ensureAccountsPlacementOnIntegration,
+  probeIntegrationAccounts,
   pushAccountsToIntegration,
 } from "@/lib/server/connectors";
 import {
@@ -57,6 +58,7 @@ export async function POST(request: Request) {
           duplicateAccounts,
           pushOptions,
         );
+        await probeIntegrationAccounts(integration, duplicateAccounts);
         const verificationResult = await verifyPushedAccountsOnIntegration(
           integration,
           duplicateAccounts,
@@ -73,6 +75,7 @@ export async function POST(request: Request) {
     }
 
     if (duplicateAccounts.length > 0) {
+      await probeIntegrationAccounts(integration, duplicateAccounts);
       await verifyPushedAccountsOnIntegration(integration, duplicateAccounts);
     }
 
@@ -90,6 +93,7 @@ export async function POST(request: Request) {
         presence.present,
         pushOptions,
       );
+      await probeIntegrationAccounts(integration, presence.present);
       await verifyPushedAccountsOnIntegration(integration, presence.present);
     }
 
@@ -112,6 +116,7 @@ export async function POST(request: Request) {
     );
     let verificationMessage = "推送后校验未执行";
     try {
+      await probeIntegrationAccounts(integration, pushableAccounts);
       const verificationResult = await verifyPushedAccountsOnIntegration(
         integration,
         pushableAccounts,
