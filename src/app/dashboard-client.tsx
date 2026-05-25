@@ -2764,20 +2764,6 @@ export default function DashboardClient({ data }: Props) {
                       停用已选
                     </button>
                     <button
-                      onClick={() => testAccounts(data.accounts.map((item) => item.id), "all")}
-                      disabled={isPending || data.accounts.length === 0}
-                      className={clsx(secondaryButton, inventoryActionButton)}
-                    >
-                      检测全部
-                    </button>
-                    <button
-                      onClick={() => testAccounts(selectedIds, "selected")}
-                      disabled={isPending || selectedIds.length === 0}
-                      className={clsx(secondaryButton, inventoryActionButton)}
-                    >
-                      检测已选
-                    </button>
-                    <button
                       onClick={deleteSelectedAccounts}
                       disabled={isPending || selectedIds.length === 0}
                       className={clsx(dangerButton, inventoryActionButton, "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_18px_38px_rgba(127,29,29,0.22)]")}
@@ -2836,6 +2822,24 @@ export default function DashboardClient({ data }: Props) {
                 </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/34 p-3">
+                <span className="mr-1 text-xs text-cyan-100/70">立即检测</span>
+                <button
+                  type="button"
+                  onClick={() => testAccounts(data.accounts.map((item) => item.id), "all")}
+                  disabled={isPending || data.accounts.length === 0}
+                  className={primaryButton}
+                >
+                  检测全部
+                </button>
+                <button
+                  type="button"
+                  onClick={() => testAccounts(selectedIds, "selected")}
+                  disabled={isPending || selectedIds.length === 0}
+                  className={secondaryButton}
+                >
+                  检测已选{selectedIds.length > 0 ? ` ${selectedIds.length}` : ""}
+                </button>
+                <span className="mx-2 hidden h-6 w-px bg-cyan-200/12 sm:inline-flex" />
                 <span className="mr-1 text-xs text-slate-500">
                   导出 {selectedIds.length > 0 ? `已选 ${selectedIds.length} 个` : `当前列表 ${accounts.length} 个`}
                 </span>
