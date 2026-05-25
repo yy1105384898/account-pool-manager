@@ -14,6 +14,8 @@ type CodexProbeResult = {
   status: AccountStatus;
   remoteStatus: string;
   message: string;
+  quota5hUsedPercent: number | null;
+  quota7dUsedPercent: number | null;
 };
 
 type CheckOptions = {
@@ -124,11 +126,32 @@ function headerNumber(headers: Headers, name: string) {
   return Number.isFinite(value) ? value : null;
 }
 
+function readCodexQuota(headers: Headers) {
+  const primaryUsed = headerNumber(headers, "x-codex-primary-used-percent");
+  const primaryWindow = headerNumber(headers, "x-codex-primary-window-minutes");
+  const secondaryUsed = headerNumber(headers, "x-codex-secondary-used-percent");
+  const secondaryWindow = headerNumber(headers, "x-codex-secondary-window-minutes");
+  const windows = [
+    { used: primaryUsed, minutes: primaryWindow, fallback: "5h" as const },
+    { used: secondaryUsed, minutes: secondaryWindow, fallback: "7d" as const },
+  ];
+
+  return {
+    quota5hUsedPercent:
+      windows.find((item) => item.minutes !== null && item.minutes <= 360)?.used ??
+      windows.find((item) => item.fallback === "5h")?.used ??
+      null,
+    quota7dUsedPercent:
+      windows.find((item) => item.minutes !== null && item.minutes >= 7 * 24 * 60 - 60)?.used ??
+      windows.find((item) => item.fallback === "7d")?.used ??
+      null,
+  };
+}
+
 function responseReachedUsageLimit(response: Response) {
-  const primaryUsed = headerNumber(response.headers, "x-codex-primary-used-percent");
-  const secondaryUsed = headerNumber(response.headers, "x-codex-secondary-used-percent");
-  return (primaryUsed !== null && primaryUsed >= 100) ||
-    (secondaryUsed !== null && secondaryUsed >= 100);
+  const quota = readCodexQuota(response.headers);
+  return (quota.quota5hUsedPercent !== null && quota.quota5hUsedPercent >= 100) ||
+    (quota.quota7dUsedPercent !== null && quota.quota7dUsedPercent >= 100);
 }
 
 function errorDetail(body: string) {
@@ -153,6 +176,7 @@ async function probeCodexConnection(
     signal: AbortSignal.timeout(30000),
   });
   const body = await response.text();
+  const quota = readCodexQuota(response.headers);
 
   if (response.status === 200) {
     if (responseReachedUsageLimit(response)) {
@@ -160,18 +184,20 @@ async function probeCodexConnection(
         status: "quota_exhausted",
         remoteStatus: "codex_rate_limited",
         message: "Codex 限流",
+        ...quota,
       };
     }
-    return { status: "active", remoteStatus: "available", message: "Codex 可用" };
+    return { status: "active", remoteStatus: "available", message: "Codex 可用", ...quota };
   }
   if (response.status === 401) {
-    return { status: "banned", remoteStatus: "unauthorized", message: "Codex 封禁" };
+    return { status: "banned", remoteStatus: "unauthorized", message: "Codex 封禁", ...quota };
   }
   if (response.status === 429) {
     return {
       status: "quota_exhausted",
       remoteStatus: "codex_rate_limited",
       message: "Codex 限流",
+      ...quota,
     };
   }
 
@@ -180,6 +206,7 @@ async function probeCodexConnection(
     status: "error",
     remoteStatus: `codex_http_${response.status}`,
     message: `Codex 异常（${response.status}${detail ? `: ${detail}` : ""}）`,
+    ...quota,
   };
 }
 
@@ -194,15 +221,26 @@ function normalizePlanType(value: string | null) {
   return value?.trim() ?? null;
 }
 
-function buildSnapshotMetadata(message: string, latencyMs: number) {
+function formatQuotaRemaining(usedPercent: number | null) {
+  if (usedPercent === null) return "未返回";
+  const remaining = Math.max(0, 100 - usedPercent);
+  return `${Math.round(remaining * 10) / 10}%`;
+}
+
+function buildQuotaMessage(probe: CodexProbeResult) {
+  if (probe.quota5hUsedPercent === null && probe.quota7dUsedPercent === null) return "";
+  return `，5h余 ${formatQuotaRemaining(probe.quota5hUsedPercent)}，7d余 ${formatQuotaRemaining(probe.quota7dUsedPercent)}`;
+}
+
+function buildSnapshotMetadata(message: string, latencyMs: number, probe?: CodexProbeResult) {
   return {
     lastCheckMessage: message,
     lastCheckLatencyMs: latencyMs,
     accountPlanSource: "codex_probe",
     subscriptionStatus: undefined,
     modelCount: undefined,
-    quota5hUsedPercent: undefined,
-    quota7dUsedPercent: undefined,
+    quota5hUsedPercent: probe?.quota5hUsedPercent ?? undefined,
+    quota7dUsedPercent: probe?.quota7dUsedPercent ?? undefined,
     requestCount7d: undefined,
     riskCount: undefined,
     cost5h: undefined,
@@ -243,14 +281,14 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
 
     const latencyMs = Date.now() - started;
     const planType = normalizePlanType(resolveAccountPlanType(account, tokens.accessToken)) ?? account.planType;
-    const message = `${probe.message}，套餐 ${planType ?? "未返回"}`;
+    const message = `${probe.message}，套餐 ${planType ?? "未返回"}${buildQuotaMessage(probe)}`;
     updateAccountTestResult(id, {
       status: probe.status,
       remoteStatus: probe.remoteStatus,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       planType,
-      metadata: buildSnapshotMetadata(message, latencyMs),
+      metadata: buildSnapshotMetadata(message, latencyMs, probe),
     });
     if (!options.silent) {
       addActivityLog(

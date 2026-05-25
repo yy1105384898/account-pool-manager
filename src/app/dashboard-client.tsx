@@ -339,6 +339,11 @@ function formatPercent(value: number | null) {
   return `${Math.round(value * 10) / 10}%`;
 }
 
+function formatRemainingFromUsedPercent(value: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "未返回";
+  return formatPercent(Math.max(0, 100 - value));
+}
+
 function formatPlanType(value?: string | null) {
   const text = value?.trim().toLowerCase();
   if (!text) return "未知";
@@ -2993,6 +2998,12 @@ export default function DashboardClient({ data }: Props) {
                                 {account.lastCheckMessage ? (
                                   <p className="max-w-[220px] text-cyan-100">
                                     检测: {formatCheckMessage(account.lastCheckMessage)}
+                                  </p>
+                                ) : null}
+                                {account.quota5hUsedPercent !== null || account.quota7dUsedPercent !== null ? (
+                                  <p className="max-w-[220px] font-mono text-[11px] text-cyan-100/70">
+                                    5h余 {formatRemainingFromUsedPercent(account.quota5hUsedPercent)} · 7d余{" "}
+                                    {formatRemainingFromUsedPercent(account.quota7dUsedPercent)}
                                   </p>
                                 ) : null}
                               </div>
