@@ -294,6 +294,7 @@ export const manualAccountInputSchema = z.object({
   planType: z.string().trim().max(60).optional(),
   accessToken: z.string().trim().min(1, "access token 不能为空"),
   refreshToken: z.string().trim().optional(),
+  idToken: z.string().trim().optional(),
   status: z.enum(accountStatuses).default("active"),
   notes: trimmedOptional,
   proxyUrl: z.url("代理地址格式不正确").optional().or(z.literal("")),
@@ -318,6 +319,10 @@ export const pushRequestSchema = z.object({
 });
 
 export const accountBulkDeleteSchema = z.object({
+  accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
+});
+
+export const accountBulkTestSchema = z.object({
   accountIds: z.array(z.string().trim().min(1)).min(1, "至少选择一个账号"),
 });
 
@@ -351,5 +356,6 @@ export type ManualAccountInput = z.infer<typeof manualAccountInputSchema>;
 export type AccountPatchInput = z.infer<typeof accountPatchSchema>;
 export type PushRequestInput = z.infer<typeof pushRequestSchema>;
 export type AccountBulkDeleteInput = z.infer<typeof accountBulkDeleteSchema>;
+export type AccountBulkTestInput = z.infer<typeof accountBulkTestSchema>;
 export type AccountBulkStatusInput = z.infer<typeof accountBulkStatusSchema>;
 export type AutoReplenishRuleInput = z.infer<typeof autoReplenishRuleSchema>;

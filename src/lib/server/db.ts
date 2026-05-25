@@ -870,6 +870,7 @@ export function createManualAccount(input: ManualAccountInput) {
     proxyUrl: normalizeNullable(input.proxyUrl),
     baseUrl: normalizeNullable(input.baseUrl),
     models: input.models ?? [],
+    idToken: normalizeNullable(input.idToken),
   });
 
   db.prepare(`

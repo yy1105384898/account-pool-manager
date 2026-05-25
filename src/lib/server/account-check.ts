@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AccountRecord, AccountStatus } from "@/lib/types";
 import { addActivityLog, getAccountById, listAccounts, updateAccountTestResult } from "@/lib/server/db";
+import { resolveAccountPlanType } from "@/lib/server/codex-token";
 import { fetchViaProxy } from "@/lib/server/proxy-fetch";
 
 type TokenSet = {
@@ -9,18 +10,10 @@ type TokenSet = {
   refreshToken: string | null;
 };
 
-type ProbeResult = {
-  name: string;
-  ok: boolean;
-  status: number;
-  data: unknown;
-  error: string | null;
-};
-
-type AccountSnapshot = {
-  planType: string | null;
-  subscriptionStatus: string | null;
-  rawSources: string[];
+type CodexProbeResult = {
+  status: AccountStatus;
+  remoteStatus: string;
+  message: string;
 };
 
 type CheckOptions = {
@@ -42,11 +35,8 @@ const tokenClients = [
   "TdJIcbe16WoTHtN95nyywh5E4yOo6ItG",
 ];
 
-const accountInfoEndpoints = [
-  { name: "account_check", url: "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27" },
-  { name: "subscriptions", url: "https://chatgpt.com/backend-api/subscriptions" },
-  { name: "me", url: "https://chatgpt.com/backend-api/me" },
-];
+const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+const CODEX_TEST_MODEL = "gpt-5.2";
 
 function readMetadataString(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
@@ -67,72 +57,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function walkObjects(value: unknown, visit: (item: Record<string, unknown>) => void) {
-  if (Array.isArray(value)) {
-    for (const item of value) walkObjects(item, visit);
-    return;
-  }
-  if (!isObject(value)) return;
-  visit(value);
-  for (const item of Object.values(value)) walkObjects(item, visit);
-}
-
-function firstStringByKeys(value: unknown, keys: string[]) {
-  let matched: string | null = null;
-  walkObjects(value, (item) => {
-    if (matched) return;
-    for (const key of keys) {
-      const direct = readString(item[key]);
-      if (direct) {
-        matched = direct;
-        return;
-      }
-      if (isObject(item[key])) {
-        matched =
-          readString(item[key].plan_type) ??
-          readString(item[key].type) ??
-          readString(item[key].name) ??
-          readString(item[key].display_name);
-        if (matched) return;
-      }
-    }
-  });
-  return matched;
-}
-
-function extractSnapshot(results: ProbeResult[]): AccountSnapshot {
-  const payloads = results.filter((item) => item.ok).map((item) => item.data);
-  const rawSources = results.filter((item) => item.ok).map((item) => item.name);
-  const merged = payloads.length === 1 ? payloads[0] : payloads;
-
-  return {
-    planType: firstStringByKeys(merged, [
-      "plan_type",
-      "chatgpt_plan_type",
-      "account_plan_type",
-      "subscription_plan_type",
-      "subscription_plan",
-      "account_plan",
-      "plan",
-    ]),
-    subscriptionStatus: firstStringByKeys(merged, [
-      "subscription_status",
-      "account_status",
-      "billing_status",
-      "status",
-    ]),
-    rawSources,
-  };
-}
-
 function buildHeaders(accessToken: string, accountId: string | null) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
-    Accept: "application/json",
+    Accept: "text/event-stream",
     "Content-Type": "application/json",
-    "User-Agent": "account-pool-manager/1.0",
+    Originator: "codex_cli_rs",
+    "User-Agent": "codex_cli_rs/0.132.0",
+    Version: "0.132.0",
+    Connection: "Keep-Alive",
   };
-  if (accountId) headers["chatgpt-account-id"] = accountId;
+  if (accountId) headers["Chatgpt-Account-Id"] = accountId;
   return headers;
 }
 
@@ -169,37 +104,83 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenSet> {
   throw new Error(lastError);
 }
 
-async function probeAccountInfo(accessToken: string, accountId: string | null) {
-  const headers = buildHeaders(accessToken, accountId);
-  return Promise.all(
-    accountInfoEndpoints.map(async (endpoint): Promise<ProbeResult> => {
-      try {
-        const response = await fetchViaProxy(endpoint.url, {
-          headers,
-          cache: "no-store",
-        });
-        const data = await response.json().catch(() => null);
-        return {
-          name: endpoint.name,
-          ok: response.ok,
-          status: response.status,
-          data,
-          error: response.ok
-            ? null
-            : readString(isObject(data) ? data.error_description ?? data.error ?? data.message : null) ??
-              `${endpoint.name} 返回 ${response.status}`,
-        };
-      } catch (error) {
-        return {
-          name: endpoint.name,
-          ok: false,
-          status: 0,
-          data: null,
-          error: error instanceof Error ? error.message : `${endpoint.name} 请求失败`,
-        };
-      }
-    }),
-  );
+function codexTestBody() {
+  return JSON.stringify({
+    model: CODEX_TEST_MODEL,
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Say hello in one sentence." }],
+      },
+    ],
+    stream: true,
+    store: false,
+    instructions: "You are a helpful assistant. Reply briefly.",
+  });
+}
+
+function headerNumber(headers: Headers, name: string) {
+  const value = Number(headers.get(name));
+  return Number.isFinite(value) ? value : null;
+}
+
+function responseReachedUsageLimit(response: Response) {
+  const primaryUsed = headerNumber(response.headers, "x-codex-primary-used-percent");
+  const secondaryUsed = headerNumber(response.headers, "x-codex-secondary-used-percent");
+  return (primaryUsed !== null && primaryUsed >= 100) ||
+    (secondaryUsed !== null && secondaryUsed >= 100);
+}
+
+function errorDetail(body: string) {
+  try {
+    const payload = JSON.parse(body) as Record<string, unknown>;
+    const error = isObject(payload.error) ? payload.error : payload;
+    return readString(error.message) ?? readString(error.error_description) ?? body.slice(0, 160);
+  } catch {
+    return body.trim().slice(0, 160);
+  }
+}
+
+async function probeCodexConnection(
+  accessToken: string,
+  accountId: string | null,
+): Promise<CodexProbeResult> {
+  const response = await fetchViaProxy(CODEX_RESPONSES_URL, {
+    method: "POST",
+    headers: buildHeaders(accessToken, accountId),
+    body: codexTestBody(),
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+  });
+  const body = await response.text();
+
+  if (response.status === 200) {
+    if (responseReachedUsageLimit(response)) {
+      return {
+        status: "quota_exhausted",
+        remoteStatus: "codex_rate_limited",
+        message: "Codex 限流",
+      };
+    }
+    return { status: "active", remoteStatus: "available", message: "Codex 可用" };
+  }
+  if (response.status === 401) {
+    return { status: "banned", remoteStatus: "unauthorized", message: "Codex 封禁" };
+  }
+  if (response.status === 429) {
+    return {
+      status: "quota_exhausted",
+      remoteStatus: "codex_rate_limited",
+      message: "Codex 限流",
+    };
+  }
+
+  const detail = errorDetail(body);
+  return {
+    status: "error",
+    remoteStatus: `codex_http_${response.status}`,
+    message: `Codex 异常（${response.status}${detail ? `: ${detail}` : ""}）`,
+  };
 }
 
 function normalizePlanType(value: string | null) {
@@ -213,24 +194,11 @@ function normalizePlanType(value: string | null) {
   return value?.trim() ?? null;
 }
 
-function buildMessage(snapshot: AccountSnapshot) {
-  const plan = normalizePlanType(snapshot.planType) ?? "未返回";
-  return `套餐 ${plan}`;
-}
-
-function buildUnavailableMessage(results: ProbeResult[]) {
-  const firstError = results.find((item) => item.error)?.error ?? "未读取到套餐订阅信息";
-  if (results.some((item) => item.status === 401 || item.status === 403)) {
-    return `库存直检未授权（${firstError}），保留导入状态`;
-  }
-  return `库存直检未返回套餐，保留导入状态（${firstError}）`;
-}
-
-function buildSnapshotMetadata(snapshot: AccountSnapshot, message: string, latencyMs: number) {
-  const metadata: Record<string, unknown> = {
+function buildSnapshotMetadata(message: string, latencyMs: number) {
+  return {
     lastCheckMessage: message,
     lastCheckLatencyMs: latencyMs,
-    accountPlanSource: snapshot.rawSources.join(","),
+    accountPlanSource: "codex_probe",
     subscriptionStatus: undefined,
     modelCount: undefined,
     quota5hUsedPercent: undefined,
@@ -240,20 +208,11 @@ function buildSnapshotMetadata(snapshot: AccountSnapshot, message: string, laten
     cost5h: undefined,
     cost7d: undefined,
   };
-
-  if (snapshot.subscriptionStatus) metadata.subscriptionStatus = snapshot.subscriptionStatus;
-
-  return metadata;
-}
-
-function activeStatus(): AccountStatus {
-  return "active";
 }
 
 function shouldCheckAccount(account: AccountRecord, now: number) {
   if (!account.accessToken.trim()) return false;
-  if (account.status === "disabled" || account.status === "banned") return false;
-  if (account.lastPushedAt) return false;
+  if (account.status === "disabled") return false;
   if (!account.lastStatusCheckedAt) return true;
   const checkedAt = Date.parse(account.lastStatusCheckedAt);
   return !Number.isFinite(checkedAt) || now - checkedAt >= ACCOUNT_CHECK_STALE_MS;
@@ -270,82 +229,47 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
     accessToken: isRefreshOnly ? "" : account.accessToken,
     refreshToken: existingRefreshToken ?? (isRefreshOnly ? cleanToken(account.accessToken) : null),
   };
-  let persistedFailure = false;
-
   try {
     if (!tokens.accessToken) {
       if (!tokens.refreshToken) throw new Error("缺少 Access Token 或 Refresh Token");
       tokens = await refreshAccessToken(tokens.refreshToken);
     }
 
-    let results = await probeAccountInfo(tokens.accessToken, account.accountId);
-    if (!results.some((item) => item.ok) && tokens.refreshToken && results.some((item) => item.status === 401 || item.status === 403)) {
+    let probe = await probeCodexConnection(tokens.accessToken, account.accountId);
+    if (probe.status === "banned" && tokens.refreshToken) {
       tokens = await refreshAccessToken(tokens.refreshToken);
-      results = await probeAccountInfo(tokens.accessToken, account.accountId);
+      probe = await probeCodexConnection(tokens.accessToken, account.accountId);
     }
 
     const latencyMs = Date.now() - started;
-    const snapshot = extractSnapshot(results);
-    if (!snapshot.rawSources.length) {
-      const message = buildUnavailableMessage(results);
-      updateAccountTestResult(id, {
-        status: account.status === "error" || account.status === "unknown" ? "active" : account.status,
-        remoteStatus: "subscription_unavailable",
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        planType: account.planType,
-        metadata: {
-          lastCheckMessage: message,
-          lastCheckLatencyMs: latencyMs,
-          accountPlanSource: "none",
-          subscriptionStatus: undefined,
-          modelCount: undefined,
-          quota5hUsedPercent: undefined,
-          quota7dUsedPercent: undefined,
-          requestCount7d: undefined,
-          riskCount: undefined,
-          cost5h: undefined,
-          cost7d: undefined,
-        },
-      });
-      persistedFailure = true;
-      if (!options.silent) addActivityLog("account_test", "info", "库存直检未确认", message, { accountId: id });
-      return { ok: true, message };
-    }
-
-    const message = buildMessage(snapshot);
-    const planType = normalizePlanType(snapshot.planType) ?? account.planType;
+    const planType = normalizePlanType(resolveAccountPlanType(account, tokens.accessToken)) ?? account.planType;
+    const message = `${probe.message}，套餐 ${planType ?? "未返回"}`;
     updateAccountTestResult(id, {
-      status: activeStatus(),
-      remoteStatus: snapshot.subscriptionStatus ?? "available",
+      status: probe.status,
+      remoteStatus: probe.remoteStatus,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       planType,
-      metadata: buildSnapshotMetadata(snapshot, message, latencyMs),
+      metadata: buildSnapshotMetadata(message, latencyMs),
     });
-    if (!options.silent) addActivityLog("account_test", "success", "账号检测成功", message, { accountId: id, planType });
+    if (!options.silent) {
+      addActivityLog(
+        "account_test",
+        probe.status === "active" ? "success" : probe.status === "error" ? "error" : "info",
+        probe.status === "active" ? "Codex账号检测成功" : "Codex账号检测异常",
+        message,
+        { accountId: id, planType },
+      );
+    }
     return { ok: true, message };
   } catch (error) {
     const message = error instanceof Error ? error.message : "账号检测失败";
-    if (!persistedFailure) {
-      updateAccountTestResult(id, {
-        status: "error",
-        remoteStatus: "check_error",
-        metadata: {
-          lastCheckMessage: message,
-          lastCheckLatencyMs: Date.now() - started,
-          subscriptionStatus: undefined,
-          modelCount: undefined,
-          quota5hUsedPercent: undefined,
-          quota7dUsedPercent: undefined,
-          requestCount7d: undefined,
-          riskCount: undefined,
-          cost5h: undefined,
-          cost7d: undefined,
-        },
-      });
-      if (!options.silent) addActivityLog("account_test", "error", "账号检测失败", message, { accountId: id });
-    }
+    updateAccountTestResult(id, {
+      status: "error",
+      remoteStatus: "check_error",
+      metadata: buildSnapshotMetadata(message, Date.now() - started),
+    });
+    if (!options.silent) addActivityLog("account_test", "error", "账号检测失败", message, { accountId: id });
     throw error instanceof Error ? error : new Error(message);
   }
 }

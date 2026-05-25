@@ -7,18 +7,20 @@ import type {
   RemoteAccountSnapshot,
 } from "@/lib/types";
 import {
-  importFromCpa,
   importFromCodexProxy,
   ensureCodexProxyAccountsPlacement,
-  pushToCpa,
   pushToCodexProxy,
   readCodexProxyAccountsSnapshot,
   readCodexProxyAccountTemplate,
-  readCpaStatus,
   readCodexProxyStatus,
-  testCpa,
   testCodexProxy,
 } from "@/lib/server/connectors/codexproxy";
+import {
+  importFromCpa,
+  pushToCpa,
+  readCpaStatus,
+  testCpa,
+} from "@/lib/server/connectors/cpa";
 import {
   importFromSub2Api,
   pushToSub2Api,
@@ -65,7 +67,7 @@ export async function pushAccountsToIntegration(
     return pushToCodexProxy(integration, accounts, options);
   }
   if (integration.type === "cpa") {
-    return pushToCpa(integration, accounts, options);
+    return pushToCpa(integration, accounts);
   }
   return pushToSub2Api(integration, accounts, options);
 }

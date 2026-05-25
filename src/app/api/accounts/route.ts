@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { ZodError } from "zod";
 import { addActivityLog, createManualAccount, findManualAccountByCredential } from "@/lib/server/db";
+import { parseCodexTokenClaims } from "@/lib/server/codex-token";
 import { accountStatuses, manualAccountInputSchema, type AccountStatus, type ManualAccountInput } from "@/lib/types";
 
 function normalizeLines(value: string) {
@@ -61,7 +62,7 @@ function collectAccountItems(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload.map(parseMaybeJsonString);
   if (!isRecord(payload)) return [];
 
-  const arrayKeys = ["accounts", "contents", "data", "items", "results", "rows", "list"];
+  const arrayKeys = ["accounts", "contents", "files", "data", "items", "results", "rows", "list"];
   for (const key of arrayKeys) {
     const value = payload[key];
     if (Array.isArray(value)) return value.map(parseMaybeJsonString);
@@ -90,6 +91,7 @@ function readNestedString(record: Record<string, unknown>, keys: string[]): stri
     "profile",
     "metadata",
     "raw",
+    "content",
   ];
   for (const key of nestedKeys) {
     const value = record[key];
@@ -145,7 +147,9 @@ function parseJsonAccounts(value: string): ManualAccountInput[] {
       "at",
     ]);
     const refreshToken = readNestedString(record, ["refreshToken", "refresh_token", "refresh", "rt"]);
-    const email = readNestedString(record, ["email", "account_email", "user_email", "mail"]);
+    const idToken = readNestedString(record, ["idToken", "id_token"]);
+    const claims = parseCodexTokenClaims(idToken) ?? parseCodexTokenClaims(accessToken);
+    const email = readNestedString(record, ["email", "account_email", "user_email", "mail"]) || claims?.email || "";
     const label = readNestedString(record, ["label", "name", "title"]) || email || `导入账号 ${index + 1}`;
     const modelText = readNestedString(record, ["models", "model", "modelList"]);
     if (!accessToken && !refreshToken) return [];
@@ -159,11 +163,12 @@ function parseJsonAccounts(value: string): ManualAccountInput[] {
           "chatgpt_account_id",
           "openai_account_id",
           "id",
-        ]),
-        userId: readNestedString(record, ["userId", "user_id", "chatgpt_user_id", "openai_user_id"]),
-        planType: readPlanType(record),
+        ]) || claims?.accountId || "",
+        userId: readNestedString(record, ["userId", "user_id", "chatgpt_user_id", "openai_user_id"]) || claims?.userId || "",
+        planType: readPlanType(record) || claims?.planType || "",
         accessToken: accessToken || `refresh:${refreshToken}`,
         refreshToken,
+        idToken,
         status: readStatus(record),
         notes: "JSON 导入",
         proxyUrl: readNestedString(record, ["proxyUrl", "proxy_url", "proxy"]),

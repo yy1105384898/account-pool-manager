@@ -87,6 +87,7 @@ const remoteStatusLabels: Record<string, string> = {
   quota_exhausted: "额度耗尽",
   exhausted: "额度耗尽",
   rate_limited: "限流",
+  codex_rate_limited: "Codex 限流",
   refreshing: "刷新中",
   unknown: "未知",
 };
@@ -280,7 +281,7 @@ const integrationFormConfig: Record<
     defaultName: "CPA",
     baseUrlPlaceholder: "服务器地址，例如 http://127.0.0.1:8080",
     authPlaceholder: "Management Key / API Key",
-    helperText: "CPA 保留兼容模式，继续走现有 /auth/* 接口。",
+    helperText: "CPA 使用 CLIProxyAPI 管理接口 /v0/management/auth-files。",
   },
   codexproxy: {
     defaultName: "codexproxy",
@@ -356,14 +357,14 @@ function formatAccountUsability(status: AccountStatus) {
 
 function formatCheckMessage(value?: string | null) {
   if (!value) return "";
-  const planMatch = value.match(/套餐\s*([A-Za-z\u4e00-\u9fa5]+)/);
-  if (planMatch?.[1]) return `套餐 ${formatPlanType(planMatch[1])}`;
-  return value;
+  return value.replace(/套餐\s*([^\s，,。)）]+)/g, (_, plan: string) => `套餐 ${formatPlanType(plan)}`);
 }
 
 function translateRemoteStatus(value?: string | null) {
   if (!value) return "未记录";
-  return remoteStatusLabels[value.toLowerCase()] ?? value;
+  const normalized = value.toLowerCase();
+  if (normalized.startsWith("codex_http_")) return `Codex 异常 ${normalized.replace("codex_http_", "")}`;
+  return remoteStatusLabels[normalized] ?? value;
 }
 
 function translateAutoRunStatus(value?: AutoReplenishRuleRecord["lastStatus"] | null) {
@@ -997,7 +998,7 @@ export default function DashboardClient({ data }: Props) {
     (total, item) => total + item.recommendedPushCount,
     0,
   );
-  const [activeView, setActiveView] = useState<WorkspaceView>(() => getWorkspaceViewFromHash());
+  const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const activeViewRef = useRef<WorkspaceView>(activeView);
   const activeViewMeta = workspaceViewMeta[activeView];
 
@@ -1317,6 +1318,20 @@ export default function DashboardClient({ data }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountIds: selectedIds, status }),
+      }),
+    );
+  }
+
+  function testAccounts(accountIds: string[], scope: "all" | "selected") {
+    if (accountIds.length === 0) {
+      setNotice({ type: "error", text: scope === "selected" ? "先勾选要检测的账号" : "没有可检测的账号" });
+      return;
+    }
+    runTask(() =>
+      callApi("/api/accounts/bulk-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountIds }),
       }),
     );
   }
@@ -2747,6 +2762,20 @@ export default function DashboardClient({ data }: Props) {
                       className={clsx(secondaryButton, inventoryActionButton)}
                     >
                       停用已选
+                    </button>
+                    <button
+                      onClick={() => testAccounts(data.accounts.map((item) => item.id), "all")}
+                      disabled={isPending || data.accounts.length === 0}
+                      className={clsx(secondaryButton, inventoryActionButton)}
+                    >
+                      检测全部
+                    </button>
+                    <button
+                      onClick={() => testAccounts(selectedIds, "selected")}
+                      disabled={isPending || selectedIds.length === 0}
+                      className={clsx(secondaryButton, inventoryActionButton)}
+                    >
+                      检测已选
                     </button>
                     <button
                       onClick={deleteSelectedAccounts}

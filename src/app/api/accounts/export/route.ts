@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readAccountIdToken, resolveAccountPlanType } from "@/lib/server/codex-token";
 import { getAccountsByIds, listAccounts } from "@/lib/server/db";
 import type { AccountRecord } from "@/lib/types";
 
@@ -60,21 +61,49 @@ function exportSub2Api(accounts: AccountRecord[]) {
   };
 }
 
+function readMetadataString(account: AccountRecord, key: string) {
+  const value = account.metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function safeFilePart(value: string) {
+  return value.replace(/[^a-zA-Z0-9@._-]+/g, "-").replace(/^-+|-+$/g, "") || "account";
+}
+
+function cpaFileName(account: AccountRecord) {
+  const saved = readMetadataString(account, "cpaAuthFileName");
+  if (saved?.toLowerCase().endsWith(".json")) return saved;
+
+  const identity = account.email ?? account.accountId ?? account.id;
+  const plan = (resolveAccountPlanType(account) ?? "").toLowerCase().replace(/[^a-z0-9_-]+/g, "");
+  return `codex-${safeFilePart(identity)}${plan ? `-${plan}` : ""}.json`;
+}
+
+function cpaCredential(account: AccountRecord) {
+  return compact({
+    type: "codex",
+    id_token: readAccountIdToken(account),
+    access_token: account.accessToken,
+    refresh_token: account.refreshToken,
+    account_id: account.accountId,
+    last_refresh: readMetadataString(account, "lastRefreshAt"),
+    email: account.email,
+    expired: readMetadataString(account, "expiresAt") ?? readMetadataString(account, "expired"),
+    plan_type: resolveAccountPlanType(account),
+  });
+}
+
 function exportCpa(accounts: AccountRecord[]) {
+  if (accounts.length === 1) return cpaCredential(accounts[0]);
+
   return {
     format: "cpa",
-    accounts: accounts.map((account) =>
-      compact({
-        token: account.accessToken,
-        refreshToken: account.refreshToken,
-        label: account.label,
-        email: account.email,
-        accountId: account.accountId,
-        userId: account.userId,
-        planType: account.planType,
-        status: account.status,
-      }),
-    ),
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    files: accounts.map((account) => ({
+      name: cpaFileName(account),
+      content: cpaCredential(account),
+    })),
   };
 }
 
