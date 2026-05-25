@@ -72,14 +72,6 @@ type CodexProxyAccountGroupList = {
   groups?: CodexProxyAccountGroup[];
 };
 
-type CodexProxyBatchTestResult = {
-  total?: number;
-  success?: number;
-  banned?: number;
-  rate_limited?: number;
-  failed?: number;
-};
-
 type CodexProxyExportAccount = {
   type?: string | null;
   email?: string | null;
@@ -459,44 +451,6 @@ async function loadLegacyCodexProxyAccounts(integration: IntegrationRecord) {
     "/auth/accounts/export?format=full",
   );
   return legacyAccountsFromPayload(payload);
-}
-
-export async function probeCodexProxyAccounts(
-  integration: IntegrationRecord,
-  accounts?: AccountRecord[],
-) {
-  const remoteAccounts = await loadCodexProxyAdminAccounts(integration);
-  const targets = accounts?.length
-    ? accounts.flatMap((account) => {
-        const matched = remoteAccounts.find((item) => matchesAccountIdentity(item, account));
-        return matched ? [matched] : [];
-      })
-    : remoteAccounts.filter((item) => item.enabled !== false);
-  const ids = targets.flatMap((item) => {
-    const id = Number(item.id);
-    return Number.isFinite(id) ? [id] : [];
-  });
-
-  if (ids.length === 0) {
-    return { probed: 0, message: "没有可执行 Codex 检测的远端账号" };
-  }
-
-  const result = await fetchJson<CodexProxyBatchTestResult>(
-    integration,
-    "/api/admin/accounts/batch-test",
-    {
-      method: "POST",
-      body: { ids },
-    },
-  );
-  const success = Number(result.success ?? 0);
-  const banned = Number(result.banned ?? 0);
-  const limited = Number(result.rate_limited ?? 0);
-  const failed = Number(result.failed ?? 0);
-  return {
-    probed: ids.length,
-    message: `Codex检测 ${ids.length} 个：可用 ${success}，封禁 ${banned}，限流 ${limited}，失败 ${failed}`,
-  };
 }
 
 export async function testCodexProxy(integration: IntegrationRecord) {

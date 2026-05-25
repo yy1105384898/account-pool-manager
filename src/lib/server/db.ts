@@ -806,20 +806,6 @@ export function listPushedAccountStatesByIntegration(integrationId: string) {
     .all(integrationId) as Array<Record<string, unknown>>;
 }
 
-export function listPushedIntegrationsByAccount(accountId: string) {
-  const db = getDb();
-  const rows = db
-    .prepare(`
-      SELECT i.*
-      FROM account_integration_pushes p
-      INNER JOIN integrations i ON i.id = p.integration_id
-      WHERE p.account_id = ? AND i.enabled = 1
-      ORDER BY p.last_pushed_at DESC
-    `)
-    .all(accountId) as Record<string, unknown>[];
-  return rows.map(mapIntegrationRow);
-}
-
 function listAccountPushSummaries() {
   const db = getDb();
   const rows = db

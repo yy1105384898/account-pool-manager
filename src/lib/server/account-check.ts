@@ -1,15 +1,7 @@
 import "server-only";
 
 import type { AccountRecord, AccountStatus } from "@/lib/types";
-import {
-  addActivityLog,
-  getAccountById,
-  listAccounts,
-  listPushedIntegrationsByAccount,
-  updateAccountTestResult,
-} from "@/lib/server/db";
-import { probeIntegrationAccounts } from "@/lib/server/connectors";
-import { verifyPushedAccountsOnIntegration } from "@/lib/server/push-verification";
+import { addActivityLog, getAccountById, listAccounts, updateAccountTestResult } from "@/lib/server/db";
 import { fetchViaProxy } from "@/lib/server/proxy-fetch";
 
 type TokenSet = {
@@ -258,76 +250,10 @@ function activeStatus(): AccountStatus {
   return "active";
 }
 
-function relayStatusLabel(status: AccountStatus) {
-  if (status === "active") return "可用";
-  if (status === "banned") return "封禁";
-  if (status === "quota_exhausted") return "限流";
-  if (status === "disabled") return "停用";
-  return "异常";
-}
-
-async function checkPushedAccountThroughCodexProxy(
-  account: AccountRecord,
-  options: CheckOptions,
-  started: number,
-) {
-  const integration = listPushedIntegrationsByAccount(account.id).find(
-    (item) => item.type === "codexproxy",
-  );
-  if (!integration) return null;
-
-  try {
-    const probe = await probeIntegrationAccounts(integration, [account]);
-    await verifyPushedAccountsOnIntegration(integration, [account]);
-    const checked = getAccountById(account.id) ?? account;
-    const plan = normalizePlanType(checked.planType) ?? "未返回";
-    const message = `${integration.name} ${probe.message}；账号${relayStatusLabel(checked.status)}，套餐 ${plan}`;
-    updateAccountTestResult(account.id, {
-      status: checked.status,
-      remoteStatus: checked.remoteStatus ?? "unknown",
-      planType: checked.planType ?? account.planType,
-      metadata: {
-        lastCheckMessage: message,
-        lastCheckLatencyMs: Date.now() - started,
-        accountPlanSource: "codexproxy",
-      },
-    });
-    if (!options.silent) {
-      addActivityLog(
-        "account_test",
-        checked.status === "active" ? "success" : "info",
-        "Codex账号检测完成",
-        message,
-        { accountId: account.id, integrationId: integration.id },
-      );
-    }
-    return { ok: true, message };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "检测失败";
-    const message = `${integration.name} Codex检测失败，保留当前状态（${detail}）`;
-    updateAccountTestResult(account.id, {
-      status: account.status,
-      remoteStatus: account.remoteStatus ?? "relay_check_error",
-      planType: account.planType,
-      metadata: {
-        lastCheckMessage: message,
-        lastCheckLatencyMs: Date.now() - started,
-        accountPlanSource: "codexproxy",
-      },
-    });
-    if (!options.silent) {
-      addActivityLog("account_test", "error", "Codex账号检测失败", message, {
-        accountId: account.id,
-        integrationId: integration.id,
-      });
-    }
-    return { ok: true, message };
-  }
-}
-
 function shouldCheckAccount(account: AccountRecord, now: number) {
   if (!account.accessToken.trim()) return false;
-  if (account.status === "disabled") return false;
+  if (account.status === "disabled" || account.status === "banned") return false;
+  if (account.lastPushedAt) return false;
   if (!account.lastStatusCheckedAt) return true;
   const checkedAt = Date.parse(account.lastStatusCheckedAt);
   return !Number.isFinite(checkedAt) || now - checkedAt >= ACCOUNT_CHECK_STALE_MS;
@@ -338,9 +264,6 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
   if (!account) throw new Error("账号不存在");
 
   const started = Date.now();
-  const relayResult = await checkPushedAccountThroughCodexProxy(account, options, started);
-  if (relayResult) return relayResult;
-
   const existingRefreshToken = cleanToken(account.refreshToken) ?? cleanToken(readMetadataString(account.metadata, "refreshToken"));
   const isRefreshOnly = account.accessToken.startsWith("refresh:");
   let tokens: TokenSet = {
