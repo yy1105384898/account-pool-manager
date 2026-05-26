@@ -862,6 +862,7 @@ export default function DashboardClient({ data }: Props) {
     ),
     ...remoteStatusOverrides,
   };
+  const integrationIdKey = data.integrations.map((item) => item.id).join("|");
   const autoRuleByIntegration = new Map(
     data.autoRules.map((item) => [item.integrationId, item] as const),
   );
@@ -1028,6 +1029,49 @@ export default function DashboardClient({ data }: Props) {
     }, 15000);
     return () => window.clearInterval(timer);
   }, [activeView, router]);
+
+  useEffect(() => {
+    if (activeView !== "overview" && activeView !== "connections") return;
+    const integrationIds = integrationIdKey.split("|").filter(Boolean);
+    if (integrationIds.length === 0) return;
+
+    let cancelled = false;
+    async function refreshVisibleRemoteStatuses() {
+      const entries = await Promise.all(
+        integrationIds.map(async (integrationId) => {
+          try {
+            const response = await fetch(`/api/integrations/${integrationId}/status?silent=1`, {
+              method: "POST",
+            });
+            const payload = (await response.json().catch(() => null)) as
+              | { ok?: boolean; summary?: RemoteStatusSummary }
+              | null;
+            return response.ok && payload?.summary ? [integrationId, payload.summary] as const : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const updates = entries.filter((item): item is readonly [string, RemoteStatusSummary] => Boolean(item));
+      if (updates.length === 0) return;
+      setRemoteStatusOverrides((current) => ({
+        ...current,
+        ...Object.fromEntries(updates),
+      }));
+      router.refresh();
+    }
+
+    void refreshVisibleRemoteStatuses();
+    const timer = window.setInterval(() => {
+      void refreshVisibleRemoteStatuses();
+    }, 60_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeView, integrationIdKey, router]);
 
   function toggleSelection(accountId: string) {
     setSelectedIds((current) =>

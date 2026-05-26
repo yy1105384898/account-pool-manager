@@ -12,8 +12,9 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-export async function POST(_: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
+  const silent = new URL(request.url).searchParams.get("silent") === "1";
   const integration = getIntegrationById(id);
   if (!integration) {
     return NextResponse.json({ ok: false, error: "连接不存在" }, { status: 404 });
@@ -23,25 +24,29 @@ export async function POST(_: Request, context: RouteContext) {
     const summary = await readIntegrationRemoteStatus(integration);
     updateIntegrationRemoteStatusSummary(integration.id, summary);
     updateIntegrationHealth(integration.id, "success", `读取成功，远端账号 ${summary.totalAccounts} 个`);
-    addActivityLog(
-      "integration_status",
-      "success",
-      "远端状态已刷新",
-      `${integration.name}: 账号 ${summary.totalAccounts}，正常 ${summary.normalAccounts}`,
-      { integrationId: id, summary },
-    );
+    if (!silent) {
+      addActivityLog(
+        "integration_status",
+        "success",
+        "远端状态已刷新",
+        `${integration.name}: 账号 ${summary.totalAccounts}，正常 ${summary.normalAccounts}`,
+        { integrationId: id, summary },
+      );
+    }
     revalidatePath("/");
     return NextResponse.json({ ok: true, summary });
   } catch (error) {
     const message = error instanceof Error ? error.message : "读取状态失败";
     updateIntegrationHealth(integration.id, "error", message);
-    addActivityLog(
-      "integration_status",
-      "error",
-      "远端状态读取失败",
-      `${integration.name}: ${message}`,
-      { integrationId: id },
-    );
+    if (!silent) {
+      addActivityLog(
+        "integration_status",
+        "error",
+        "远端状态读取失败",
+        `${integration.name}: ${message}`,
+        { integrationId: id },
+      );
+    }
     revalidatePath("/");
     return NextResponse.json({ ok: false, error: message }, { status: 400 });
   }

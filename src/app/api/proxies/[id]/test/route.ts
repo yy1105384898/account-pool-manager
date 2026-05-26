@@ -12,21 +12,26 @@ type ProxyGeoPayload = {
   status?: string;
   ip?: string;
   query?: string;
+  origin?: string;
   country?: string;
+  country_name?: string;
   region?: string;
   regionName?: string;
   city?: string;
+  message?: string;
 };
 
 function readGeoLocation(payload: ProxyGeoPayload | null) {
-  if (!payload?.success && payload?.status !== "success") {
+  if (!payload) return { ip: null, location: null };
+  if (payload.success === false || payload.status === "fail") {
     return { ip: null, location: null };
   }
-  const location = [payload.country, payload.regionName ?? payload.region, payload.city]
+  const ip = payload.ip ?? payload.query ?? payload.origin?.split(",")[0]?.trim() ?? null;
+  const location = [payload.country_name ?? payload.country, payload.regionName ?? payload.region, payload.city]
     .filter((item): item is string => Boolean(item))
     .join("·");
   return {
-    ip: payload.ip ?? payload.query ?? null,
+    ip,
     location: location || null,
   };
 }
@@ -34,20 +39,30 @@ function readGeoLocation(payload: ProxyGeoPayload | null) {
 async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
   let lastError = "代理出口检测失败";
   for (const url of [
-    "http://ip-api.com/json/?lang=zh-CN",
     "https://ipinfo.io/json",
     "https://ipwho.is/?lang=zh-CN",
+    "http://ip-api.com/json/?lang=zh-CN",
+    "https://ipapi.co/json/",
+    "https://api64.ipify.org?format=json",
   ]) {
     const started = Date.now();
     try {
-      const response = await fetchViaProxy(url, { cache: "no-store" }, proxy);
+      const response = await fetchViaProxy(
+        url,
+        {
+          cache: "no-store",
+          headers: { "User-Agent": "account-pool-manager/1.0" },
+          signal: AbortSignal.timeout(15000),
+        },
+        proxy,
+      );
       if (!response.ok) {
         lastError = `出口检测返回 ${response.status}`;
         continue;
       }
       const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
       const result = readGeoLocation(payload);
-      if (result.ip || result.location) {
+      if (result.ip) {
         return { ...result, latencyMs: Date.now() - started };
       }
       lastError = "出口检测未返回地区";
