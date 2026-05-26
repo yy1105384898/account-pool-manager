@@ -248,6 +248,33 @@ async function persistRunOutcome(
   );
 }
 
+function shouldWriteAutoReplenishActivity(
+  triggerSource: "manual" | "scheduled",
+  result: AutoReplenishRunResult,
+) {
+  if (triggerSource === "manual") return true;
+  if (result.status === "success" && result.pushed > 0) return true;
+  if (result.status === "error") return true;
+  return false;
+}
+
+function writeAutoReplenishActivity(
+  triggerSource: "manual" | "scheduled",
+  status: "success" | "error" | "info",
+  title: string,
+  result: AutoReplenishRunResult,
+  metadata?: Record<string, unknown>,
+) {
+  if (!shouldWriteAutoReplenishActivity(triggerSource, result)) return;
+  addActivityLog("auto_replenish_run", status, title, result.message, {
+    integrationId: result.integrationId,
+    triggerSource,
+    pushed: result.pushed,
+    status: result.status,
+    ...(metadata ?? {}),
+  });
+}
+
 export function getAutoReplenishSnapshot() {
   return {
     rules: listAutoReplenishRules(),
@@ -301,12 +328,7 @@ export async function runAutoReplenishForIntegration(
         selectedAccountIds: [],
       };
       await persistRunOutcome(rule, startedAt, triggerSource, result);
-      if (triggerSource === "manual") {
-        addActivityLog("auto_replenish_run", "info", "自动补号已检查", result.message, {
-          integrationId,
-          status: result.status,
-        });
-      }
+      writeAutoReplenishActivity(triggerSource, "info", "自动补号已检查", result);
       updateIntegrationHealth(
         integrationId,
         "success",
@@ -325,15 +347,7 @@ export async function runAutoReplenishForIntegration(
         selectedAccountIds: [],
       };
       await persistRunOutcome(rule, startedAt, triggerSource, result);
-      if (triggerSource === "manual") {
-        addActivityLog(
-          "auto_replenish_run",
-          "info",
-          "自动补号已跳过",
-          result.message,
-          { integrationId, status: result.status },
-        );
-      }
+      writeAutoReplenishActivity(triggerSource, "info", "自动补号已跳过", result);
       updateIntegrationHealth(integrationId, "success", result.message);
       return result;
     }
@@ -381,12 +395,7 @@ export async function runAutoReplenishForIntegration(
         selectedAccountIds: [],
       };
       await persistRunOutcome(rule, startedAt, triggerSource, result);
-      if (triggerSource === "manual") {
-        addActivityLog("auto_replenish_run", "error", "自动补号失败", result.message, {
-          integrationId,
-          status: result.status,
-        });
-      }
+      writeAutoReplenishActivity(triggerSource, "error", "自动补号失败", result);
       updateIntegrationHealth(integrationId, "error", result.message);
       throw new Error(result.message);
     }
@@ -422,12 +431,9 @@ export async function runAutoReplenishForIntegration(
         selectedAccountIds: presence.present.map((item) => item.id),
       };
       await persistRunOutcome(rule, startedAt, triggerSource, result);
-      if (triggerSource === "manual") {
-        addActivityLog("auto_replenish_run", "info", "自动补号已跳过", result.message, {
-          integrationId,
-          skippedRemoteDuplicate: presence.present.length,
-        });
-      }
+      writeAutoReplenishActivity(triggerSource, "info", "自动补号已跳过", result, {
+        skippedRemoteDuplicate: presence.present.length,
+      });
       updateIntegrationHealth(integrationId, "success", result.message);
       return result;
     }
@@ -468,12 +474,7 @@ export async function runAutoReplenishForIntegration(
     await persistRunOutcome(rule, startedAt, triggerSource, result);
     updateIntegrationHealth(integrationId, "success", result.message);
 
-    if (triggerSource === "manual") {
-      addActivityLog("auto_replenish_run", "success", "自动补号完成", result.message, {
-        integrationId,
-        pushed: pushResult.pushed,
-      });
-    }
+    writeAutoReplenishActivity(triggerSource, "success", "自动补号完成", result);
 
     return result;
   } catch (error) {
@@ -493,11 +494,7 @@ export async function runAutoReplenishForIntegration(
     };
     await persistRunOutcome(rule, startedAt, triggerSource, result);
     updateIntegrationHealth(integrationId, "error", message);
-    if (triggerSource === "manual") {
-      addActivityLog("auto_replenish_run", "error", "自动补号失败", message, {
-        integrationId,
-      });
-    }
+    writeAutoReplenishActivity(triggerSource, "error", "自动补号失败", result);
     throw error instanceof Error ? error : new Error(message);
   }
 }

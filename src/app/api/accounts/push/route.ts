@@ -29,6 +29,10 @@ export async function POST(request: Request) {
 
     const accounts = getAccountsByIds(payload.accountIds);
     if (accounts.length === 0) {
+      addActivityLog("account_push", "error", "账号推送失败", "未找到可推送账号", {
+        integrationId: integration.id,
+        requestedAccountIds: payload.accountIds,
+      });
       return NextResponse.json({ ok: false, error: "未找到可推送账号" }, { status: 404 });
     }
 
@@ -69,6 +73,12 @@ export async function POST(request: Request) {
         revalidatePath("/");
         return NextResponse.json({ ok: true, result: { pushed: 0, message }, message });
       }
+      const message = `所选 ${accounts.length} 个账号没有可推送的正常库存号，跳过非正常 ${inactiveCount} 个`;
+      addActivityLog("account_push", "error", "账号推送失败", message, {
+        integrationId: integration.id,
+        requested: accounts.length,
+        skippedInactive: inactiveCount,
+      });
       return NextResponse.json({ ok: false, error: "所选账号没有可推送的正常库存号" }, { status: 400 });
     }
 

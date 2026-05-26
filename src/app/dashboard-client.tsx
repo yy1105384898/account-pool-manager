@@ -997,6 +997,18 @@ export default function DashboardClient({ data }: Props) {
       recommendedPushCount,
     };
   });
+  const relayAlertPlans = relayReplenishPlans.filter(
+    (item) =>
+      !item.remoteStatus ||
+      item.normalLow ||
+      item.quotaLow ||
+      item.quotaCritical ||
+      item.warningAccounts > 0,
+  );
+  const relayQuotaAlertCount = relayReplenishPlans.filter(
+    (item) => item.quotaLow || item.quotaCritical,
+  ).length;
+  const relayShortageAlertCount = relayReplenishPlans.filter((item) => item.normalLow).length;
   const relayNeedPushCount = relayReplenishPlans.filter(
     (item) => item.recommendedPushCount > 0 || !item.remoteStatus,
   ).length;
@@ -1004,6 +1016,10 @@ export default function DashboardClient({ data }: Props) {
     (total, item) => total + item.recommendedPushCount,
     0,
   );
+  const overviewAlertTotal =
+    data.summary.warningAccounts +
+    remoteWarningAccounts +
+    relayAlertPlans.length;
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const activeViewRef = useRef<WorkspaceView>(activeView);
   const activeViewMeta = workspaceViewMeta[activeView];
@@ -1793,8 +1809,8 @@ export default function DashboardClient({ data }: Props) {
                   <MetricCard
                     icon={AlertCircle}
                     label="异常告警"
-                    value={data.summary.warningAccounts + remoteWarningAccounts}
-                    extra={`本地 ${data.summary.warningAccounts} · 远端 ${remoteWarningAccounts}`}
+                    value={overviewAlertTotal}
+                    extra={`本地 ${data.summary.warningAccounts} · 远端 ${remoteWarningAccounts} · 补号 ${relayAlertPlans.length}`}
                     tone="bg-amber-400/25"
                   />
                   <MetricCard
@@ -1805,6 +1821,50 @@ export default function DashboardClient({ data }: Props) {
                     tone="bg-teal-400/25"
                   />
                 </div>
+
+                {relayAlertPlans.length > 0 ? (
+                  <section className="rounded-[1.55rem] border border-amber-300/25 bg-amber-400/10 p-4 shadow-[0_0_36px_rgba(251,191,36,0.10)]">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-amber-100/75">
+                          Replenish Alert
+                        </p>
+                        <h2 className="mt-2 text-lg font-semibold text-amber-50">
+                          补号告警 {relayAlertPlans.length} 个
+                        </h2>
+                      </div>
+                      <p className="text-sm text-amber-100/80">
+                        缺号 {relayShortageAlertCount} · 额度不足 {relayQuotaAlertCount} · 建议补号 {recommendedPushTotal}
+                      </p>
+                    </div>
+                    <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                      {relayAlertPlans.slice(0, 4).map((plan) => {
+                        const reasons = [
+                          !plan.remoteStatus ? "未检测" : "",
+                          plan.normalLow ? `缺号 ${plan.remoteStatus?.normalAccounts ?? 0}/${plan.autoRule?.minUsableAccounts ?? 0}` : "",
+                          plan.quotaCritical ? "5h 接近耗尽" : plan.quotaLow ? `5h 低于 ${plan.autoRule?.min5hRemainingPercent ?? 0}%` : "",
+                          plan.warningAccounts > 0 ? `异常 ${plan.warningAccounts}` : "",
+                        ].filter(Boolean);
+                        return (
+                          <div
+                            key={plan.integration.id}
+                            className="rounded-2xl border border-amber-200/20 bg-slate-950/32 px-4 py-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-medium text-white">{plan.integration.name}</span>
+                              <span className="rounded-full border border-amber-200/25 bg-amber-300/12 px-2.5 py-1 text-xs text-amber-100">
+                                建议补 {plan.recommendedPushCount}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-xs leading-5 text-amber-100/78">
+                              {reasons.join(" · ")}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ) : null}
 
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
                   <section className={panelClass}>
