@@ -21,6 +21,9 @@ type ProxyGeoPayload = {
   message?: string;
 };
 
+const CODEX_TARGET_URL = "https://chatgpt.com/backend-api/codex/responses";
+const CODEX_TRACE_URL = "https://chatgpt.com/cdn-cgi/trace";
+
 function readGeoLocation(payload: ProxyGeoPayload | null) {
   if (!payload) return { ip: null, location: null };
   if (payload.success === false || payload.status === "fail") {
@@ -36,8 +39,63 @@ function readGeoLocation(payload: ProxyGeoPayload | null) {
   };
 }
 
+function parseTrace(body: string) {
+  const fields = Object.fromEntries(
+    body
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const separator = line.indexOf("=");
+        return separator > 0 ? [[line.slice(0, separator), line.slice(separator + 1)]] : [];
+      }),
+  );
+  const ip = fields.ip?.trim() || null;
+  const location = [fields.loc, fields.colo].filter(Boolean).join("-");
+  return { ip, location: location || null };
+}
+
+async function detectCodexLatency(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
+  const started = Date.now();
+  const response = await fetchViaProxy(
+    CODEX_TARGET_URL,
+    {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Authorization: "Bearer proxy-connectivity-test",
+        "Content-Type": "application/json",
+        "User-Agent": "codex_cli_rs/0.132.0",
+        Originator: "codex_cli_rs",
+      },
+      body: JSON.stringify({ model: "gpt-5.2", input: [], stream: false, store: false }),
+      signal: AbortSignal.timeout(15000),
+    },
+    proxy,
+  );
+  if (response.status >= 500) {
+    throw new Error(`Codex 目标返回 ${response.status}`);
+  }
+  return Date.now() - started;
+}
+
 async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
-  let lastError = "代理出口检测失败";
+  try {
+    const response = await fetchViaProxy(
+      CODEX_TRACE_URL,
+      {
+        cache: "no-store",
+        headers: { "User-Agent": "codex_cli_rs/0.132.0" },
+        signal: AbortSignal.timeout(10000),
+      },
+      proxy,
+    );
+    if (response.ok) {
+      const trace = parseTrace(await response.text());
+      if (trace.ip) return trace;
+    }
+  } catch {
+    // Fall back to public IP services only for location metadata.
+  }
+
   for (const url of [
     "https://ipinfo.io/json",
     "https://ipwho.is/?lang=zh-CN",
@@ -45,7 +103,6 @@ async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>
     "https://ipapi.co/json/",
     "https://api64.ipify.org?format=json",
   ]) {
-    const started = Date.now();
     try {
       const response = await fetchViaProxy(
         url,
@@ -57,20 +114,16 @@ async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>
         proxy,
       );
       if (!response.ok) {
-        lastError = `出口检测返回 ${response.status}`;
         continue;
       }
       const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
       const result = readGeoLocation(payload);
-      if (result.ip) {
-        return { ...result, latencyMs: Date.now() - started };
-      }
-      lastError = "出口检测未返回地区";
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : "代理出口检测失败";
+      if (result.ip) return result;
+    } catch {
+      // Location failure must not override an available Codex target.
     }
   }
-  throw new Error(lastError);
+  return { ip: null, location: null };
 }
 
 export async function POST(_: Request, context: RouteContext) {
@@ -79,21 +132,22 @@ export async function POST(_: Request, context: RouteContext) {
   if (!proxy) return NextResponse.json({ ok: false, error: "代理不存在" }, { status: 404 });
 
   try {
+    const latencyMs = await detectCodexLatency(proxy);
     const geo = await detectProxyGeo(proxy);
     updateProxy(id, {
       lastTestStatus: "success",
-      lastTestMessage: geo.location ? `出口 ${geo.location}` : "代理可用",
-      lastLatencyMs: geo.latencyMs,
+      lastTestMessage: geo.location ? `Codex 可用，出口 ${geo.location}` : "Codex 目标可用",
+      lastLatencyMs: latencyMs,
       lastTestIp: geo.ip,
       lastTestLocation: geo.location,
     });
     revalidatePath("/");
     return NextResponse.json({
       ok: true,
-      latencyMs: geo.latencyMs,
+      latencyMs,
       ip: geo.ip,
       location: geo.location,
-      message: `代理可用，${geo.location ?? "地区未返回"}，延迟 ${geo.latencyMs}ms`,
+      message: `Codex 目标可用，${geo.location ?? "地区未返回"}，延迟 ${latencyMs}ms`,
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "未知错误";

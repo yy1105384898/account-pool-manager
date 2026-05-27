@@ -39,6 +39,7 @@ const tokenClients = [
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const CODEX_TEST_MODEL = "gpt-5.2";
+const NETWORK_RETRY_COUNT = 2;
 
 function readMetadataString(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
@@ -57,6 +58,36 @@ function readString(value: unknown) {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message === "[object Object]" ? "代理返回无效错误" : error.message;
+  }
+  if (typeof error === "string" && error.trim()) return error;
+  if (isObject(error)) {
+    return readString(error.message) ?? readString(error.error) ?? JSON.stringify(error);
+  }
+  return "账号检测失败";
+}
+
+function isTransientNetworkError(error: unknown) {
+  return /ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|TLS|socket|代理连接|代理请求超时|网络|fetch failed/i.test(
+    errorMessage(error),
+  );
+}
+
+async function retryTransientNetwork<T>(operation: () => Promise<T>) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= NETWORK_RETRY_COUNT; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientNetworkError(error) || attempt === NETWORK_RETRY_COUNT) throw error;
+    }
+  }
+  throw lastError;
 }
 
 function buildHeaders(accessToken: string, accountId: string | null) {
@@ -81,12 +112,14 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenSet> {
       client_id: clientId,
       refresh_token: refreshToken,
     });
-    const response = await fetchViaProxy("https://auth.openai.com/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      cache: "no-store",
-    });
+    const response = await retryTransientNetwork(() =>
+      fetchViaProxy("https://auth.openai.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        cache: "no-store",
+      }),
+    );
     const data = (await response.json().catch(() => null)) as
       | {
           access_token?: string;
@@ -168,13 +201,15 @@ async function probeCodexConnection(
   accessToken: string,
   accountId: string | null,
 ): Promise<CodexProbeResult> {
-  const response = await fetchViaProxy(CODEX_RESPONSES_URL, {
-    method: "POST",
-    headers: buildHeaders(accessToken, accountId),
-    body: codexTestBody(),
-    cache: "no-store",
-    signal: AbortSignal.timeout(30000),
-  });
+  const response = await retryTransientNetwork(() =>
+    fetchViaProxy(CODEX_RESPONSES_URL, {
+      method: "POST",
+      headers: buildHeaders(accessToken, accountId),
+      body: codexTestBody(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(30000),
+    }),
+  );
   const body = await response.text();
   const quota = readCodexQuota(response.headers);
 
@@ -301,7 +336,19 @@ export async function checkAccountById(id: string, options: CheckOptions = {}) {
     }
     return { ok: true, message };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "账号检测失败";
+    const message = errorMessage(error);
+    if (isTransientNetworkError(error)) {
+      const networkMessage = `检测网络失败：${message}；已保留原账号状态`;
+      updateAccountTestResult(id, {
+        status: account.status,
+        remoteStatus: account.remoteStatus ?? "network_error",
+        metadata: buildSnapshotMetadata(networkMessage, Date.now() - started),
+      });
+      if (!options.silent) {
+        addActivityLog("account_test", "info", "账号检测网络失败", networkMessage, { accountId: id });
+      }
+      throw new Error(networkMessage);
+    }
     updateAccountTestResult(id, {
       status: "error",
       remoteStatus: "check_error",

@@ -37,6 +37,19 @@ function bodyToBuffer(body: RequestInit["body"]) {
   throw new Error("当前代理请求暂不支持这种请求体");
 }
 
+function proxyErrorMessage(error: NodeJS.ErrnoException) {
+  const code = error.code ? String(error.code) : "";
+  if (code === "ECONNRESET") return "代理连接被重置";
+  if (code === "ETIMEDOUT") return "代理连接超时";
+  if (code === "ECONNREFUSED") return "代理端口拒绝连接";
+  if (code === "ENOTFOUND") return "代理地址无法解析";
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH") return "代理网络不可达";
+  const message = typeof error.message === "string" && error.message.trim()
+    ? error.message
+    : JSON.stringify(error);
+  return code ? `${message} (${code})` : message;
+}
+
 async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: string) {
   const target = new URL(input);
   const body = bodyToBuffer(init.body);
@@ -76,7 +89,7 @@ async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: st
       req.destroy(new Error("代理请求超时"));
     });
     req.on("error", (error: NodeJS.ErrnoException) => {
-      reject(new Error(error.code ? `${error.message} (${error.code})` : error.message));
+      reject(new Error(proxyErrorMessage(error)));
     });
 
     if (init.signal) {
