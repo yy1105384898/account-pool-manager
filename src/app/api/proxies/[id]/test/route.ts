@@ -47,6 +47,7 @@ async function checkProxyHealth(proxy: NonNullable<ReturnType<typeof getProxyByI
       cache: "no-store",
       headers: { "User-Agent": "account-pool-manager/1.0" },
       redirect: "manual",
+      timeoutMs: 10000,
       signal: AbortSignal.timeout(10000),
     },
     proxy,
@@ -58,33 +59,24 @@ async function checkProxyHealth(proxy: NonNullable<ReturnType<typeof getProxyByI
 }
 
 async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
-  for (const url of [
-    "http://ip-api.com/json/?lang=zh-CN",
-    "https://ipwho.is/?lang=zh-CN",
-    "https://ipinfo.io/json",
-    "https://ipapi.co/json/",
-    "https://api64.ipify.org?format=json",
-  ]) {
-    try {
-      const response = await fetchViaProxy(
-        url,
-        {
-          cache: "no-store",
-          headers: { "User-Agent": "account-pool-manager/1.0" },
-          timeoutMs: 3000,
-          signal: AbortSignal.timeout(3000),
-        },
-        proxy,
-      );
-      if (!response.ok) continue;
-      const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
-      const result = readGeoLocation(payload);
-      if (result.ip) return result;
-    } catch {
-      // 地区/IP 只用于展示，不能覆盖 generate_204 的代理健康结果。
-    }
+  try {
+    const response = await fetchViaProxy(
+      "http://ip-api.com/json/?lang=zh-CN",
+      {
+        cache: "no-store",
+        headers: { "User-Agent": "account-pool-manager/1.0" },
+        timeoutMs: 2500,
+        signal: AbortSignal.timeout(2500),
+      },
+      proxy,
+    );
+    if (!response.ok) return { ip: null, location: null };
+    const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
+    return readGeoLocation(payload);
+  } catch {
+    // 地区/IP 只用于展示，不能覆盖 generate_204 的代理健康结果。
+    return { ip: null, location: null };
   }
-  return { ip: null, location: null };
 }
 
 export async function POST(_: Request, context: RouteContext) {
