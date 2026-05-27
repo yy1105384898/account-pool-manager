@@ -1298,8 +1298,8 @@ export default function DashboardClient({ data }: Props) {
       const errorCount = results.length - successCount;
       return {
         ok: successCount > 0,
-        error: `已测试 ${results.length} 个，可用 ${successCount} 个，异常 ${errorCount} 个`,
-        message: `已测试 ${results.length} 个，可用 ${successCount} 个，异常 ${errorCount} 个`,
+        error: `已检测 ${results.length} 个，已识别 ${successCount} 个，未识别 ${errorCount} 个`,
+        message: `已检测 ${results.length} 个，已识别 ${successCount} 个，未识别 ${errorCount} 个`,
       };
     });
   }
@@ -1307,7 +1307,7 @@ export default function DashboardClient({ data }: Props) {
   function disableFailedProxies() {
     runTask(async () => {
       const failed = data.proxies.filter((proxy) => proxy.lastTestStatus === "error");
-      if (failed.length === 0) return { ok: false, error: "没有异常代理需要停用" };
+      if (failed.length === 0) return { ok: false, error: "没有未识别代理需要停用" };
       const results = await Promise.all(
         failed.map((proxy) =>
           callApi(`/api/proxies/${proxy.id}`, {
@@ -1320,8 +1320,8 @@ export default function DashboardClient({ data }: Props) {
       const count = results.filter((item) => item.ok).length;
       return {
         ok: count > 0,
-        error: "停用异常代理失败",
-        message: `已停用 ${count} 个异常代理`,
+        error: "停用未识别代理失败",
+        message: `已停用 ${count} 个未识别代理`,
       };
     });
   }
@@ -1333,10 +1333,10 @@ export default function DashboardClient({ data }: Props) {
   function deleteFailedProxies() {
     const failed = data.proxies.filter((proxy) => proxy.lastTestStatus === "error");
     if (failed.length === 0) {
-      setNotice({ type: "error", text: "没有异常代理可清理" });
+      setNotice({ type: "error", text: "没有未识别代理可清理" });
       return;
     }
-    if (!window.confirm(`确认删除 ${failed.length} 个异常代理？`)) return;
+    if (!window.confirm(`确认删除 ${failed.length} 个未识别代理？`)) return;
     runTask(async () => {
       const results = await Promise.all(
         failed.map((proxy) => callApi(`/api/proxies/${proxy.id}`, { method: "DELETE" })),
@@ -1344,8 +1344,8 @@ export default function DashboardClient({ data }: Props) {
       const count = results.filter((item) => item.ok).length;
       return {
         ok: count > 0,
-        error: "删除异常代理失败",
-        message: `已删除 ${count} 个异常代理`,
+        error: "删除未识别代理失败",
+        message: `已删除 ${count} 个未识别代理`,
       };
     });
   }
@@ -2321,15 +2321,15 @@ export default function DashboardClient({ data }: Props) {
                         {data.proxyPoolEnabled ? "停用轮询" : "启用轮询"}
                       </button>
                       <button type="button" disabled={isPending || data.proxies.length === 0} onClick={testAllProxies} className={secondaryButton}>
-                        全部测试
+                        获取地区
                       </button>
                       <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={disableFailedProxies} className={secondaryButton}>
-                        停用异常
+                        停用未识别
                       </button>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={deleteFailedProxies} className={dangerButton}>
-                        清理异常
+                        清理未识别
                       </button>
                       <div className="rounded-2xl border border-cyan-200/12 bg-cyan-300/8 px-4 py-3 text-xs leading-5 text-slate-300">
                         当前策略：{data.proxyPoolEnabled ? "按启用代理顺序轮询" : "直连 OpenAI，不使用代理池"}
@@ -2415,7 +2415,7 @@ export default function DashboardClient({ data }: Props) {
                               {proxy.lastLatencyMs === null ? "未测试" : `${proxy.lastLatencyMs}ms`}
                             </td>
                             <td className="px-4 py-4 text-xs text-slate-400">
-                              <p>{proxy.lastTestStatus === "success" ? "可用" : proxy.lastTestStatus === "error" ? "异常" : "未测试"}</p>
+                              <p>{proxy.lastTestStatus === "success" ? "已识别" : proxy.lastTestStatus === "error" ? "未识别" : "未测试"}</p>
                               <p className="mt-1">{maskSensitiveText(proxy.lastTestMessage)}</p>
                             </td>
                             <td className="px-4 py-4 text-xs text-slate-400">
