@@ -1509,7 +1509,7 @@ export function getDashboardData(): DashboardData {
   const integrations = listIntegrations();
   const accounts = listAccounts();
   const pushSummaries = listAccountPushSummaries();
-  const logs = listActivityLogs(100);
+  const logs = listActivityLogs(200);
   const proxies = listProxies();
   const storedRules = new Map(
     listAutoReplenishRules().map((item) => [item.integrationId, item] as const),

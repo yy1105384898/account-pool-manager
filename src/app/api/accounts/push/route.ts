@@ -19,11 +19,34 @@ import {
   verifyPushedAccountsOnIntegration,
 } from "@/lib/server/push-verification";
 
+function readPushContext(raw: unknown) {
+  if (!raw || typeof raw !== "object") return {};
+  const record = raw as Record<string, unknown>;
+  const accountIds = Array.isArray(record.accountIds)
+    ? record.accountIds.filter((item): item is string => typeof item === "string")
+    : undefined;
+  return {
+    integrationId: typeof record.integrationId === "string" ? record.integrationId : undefined,
+    accountIds,
+  };
+}
+
 export async function POST(request: Request) {
+  let pushContext: { integrationId?: string; accountIds?: string[] } = {};
   try {
-    const payload = pushRequestSchema.parse(await request.json());
+    const rawPayload = await request.json();
+    pushContext = readPushContext(rawPayload);
+    const payload = pushRequestSchema.parse(rawPayload);
+    pushContext = {
+      integrationId: payload.integrationId,
+      accountIds: payload.accountIds,
+    };
     const integration = getIntegrationById(payload.integrationId);
     if (!integration) {
+      addActivityLog("account_push", "error", "账号推送失败", "连接不存在，未执行推送", {
+        integrationId: payload.integrationId,
+        requested: payload.accountIds.length,
+      });
       return NextResponse.json({ ok: false, error: "连接不存在" }, { status: 404 });
     }
 
@@ -35,6 +58,11 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ ok: false, error: "未找到可推送账号" }, { status: 404 });
     }
+
+    addActivityLog("account_push", "info", "账号推送开始", `${integration.name}: 准备推送 ${accounts.length} 个账号`, {
+      integrationId: integration.id,
+      requested: accounts.length,
+    });
 
     const pushOptions = {
       targetGroups: payload.targetGroups ?? [],
@@ -114,7 +142,38 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, result: { pushed: 0, message }, message });
     }
 
-    const result = await pushAccountsToIntegration(integration, pushableAccounts, pushOptions);
+    let result: Awaited<ReturnType<typeof pushAccountsToIntegration>>;
+    try {
+      result = await pushAccountsToIntegration(integration, pushableAccounts, pushOptions);
+    } catch (error) {
+      const pushErrorMessage = error instanceof Error ? error.message : "未知错误";
+      const afterErrorPresence = await splitAccountsByIntegrationPresence(
+        integration,
+        pushableAccounts,
+      ).catch(() => null);
+      const pushedAfterError = afterErrorPresence?.present ?? [];
+      if (pushedAfterError.length > 0) {
+        markAccountsPushed(pushedAfterError.map((item) => item.id));
+        recordAccountsPushedToIntegration(
+          integration.id,
+          pushedAfterError.map((item) => item.id),
+        );
+        const message = `${integration.name}: 已在中转站确认 ${pushedAfterError.length}/${pushableAccounts.length} 个账号，后续分组/校验失败：${pushErrorMessage}`;
+        addActivityLog("account_push", "success", "账号推送部分完成", message, {
+          integrationId: integration.id,
+          pushed: pushedAfterError.length,
+          requested: pushableAccounts.length,
+          postPushError: pushErrorMessage,
+        });
+        revalidatePath("/");
+        return NextResponse.json({
+          ok: true,
+          result: { pushed: pushedAfterError.length, message },
+          message,
+        });
+      }
+      throw error;
+    }
     markAccountsPushed(pushableAccounts.map((item) => item.id));
     recordAccountsPushedToIntegration(
       integration.id,
@@ -166,6 +225,10 @@ export async function POST(request: Request) {
       "error",
       "账号推送失败",
       message,
+      {
+        integrationId: pushContext.integrationId,
+        requested: pushContext.accountIds?.length,
+      },
     );
     revalidatePath("/");
     return NextResponse.json({ ok: false, error: message }, { status: 400 });

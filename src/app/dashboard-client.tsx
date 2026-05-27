@@ -1002,8 +1002,7 @@ export default function DashboardClient({ data }: Props) {
       !item.remoteStatus ||
       item.normalLow ||
       item.quotaLow ||
-      item.quotaCritical ||
-      item.warningAccounts > 0,
+      item.quotaCritical,
   );
   const relayQuotaAlertCount = relayReplenishPlans.filter(
     (item) => item.quotaLow || item.quotaCritical,
@@ -3303,12 +3302,13 @@ export default function DashboardClient({ data }: Props) {
                     <option value={20}>显示 20 条</option>
                     <option value={50}>显示 50 条</option>
                     <option value={100}>显示 100 条</option>
+                    <option value={200}>显示 200 条</option>
                   </select>
                   <button type="button" onClick={() => router.refresh()} className={secondaryButton}>
                     刷新
                   </button>
-                  <button type="button" onClick={() => clearLogs(20)} className={secondaryButton}>
-                    保留 20 条
+                  <button type="button" onClick={() => clearLogs(200)} className={secondaryButton}>
+                    保留 200 条
                   </button>
                   <button type="button" onClick={() => clearLogs()} className={dangerButton}>
                     清空日志
