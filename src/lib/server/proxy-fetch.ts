@@ -9,6 +9,10 @@ import { SocksProxyAgent } from "socks-proxy-agent";
 import type { ProxyRecord } from "@/lib/types";
 import { getNextEnabledProxy } from "@/lib/server/db";
 
+type ProxyRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
+
 export function resolveProxyUrl(proxy?: ProxyRecord | null) {
   return proxy?.enabled ? proxy.url : null;
 }
@@ -50,7 +54,7 @@ function proxyErrorMessage(error: NodeJS.ErrnoException) {
   return code ? `${message} (${code})` : message;
 }
 
-async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: string) {
+async function fetchWithNodeProxy(input: string, init: ProxyRequestInit, proxyUrl: string) {
   const target = new URL(input);
   const body = bodyToBuffer(init.body);
   const headers = new Headers(init.headers);
@@ -66,15 +70,22 @@ async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: st
     method: init.method ?? (body ? "POST" : "GET"),
     headers: Object.fromEntries(headers.entries()),
     agent: createProxyAgent(proxyUrl, target.protocol) as RequestOptions["agent"],
-    timeout: 20000,
+    timeout: init.timeoutMs ?? 20000,
   };
   const transport = target.protocol === "http:" ? httpRequest : httpsRequest;
 
   return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    let timeout: NodeJS.Timeout | null = null;
+    const finish = () => {
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+    };
     const req = transport(requestOptions, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk: Buffer) => chunks.push(chunk));
       res.on("end", () => {
+        finish();
         resolve(
           new Response(Buffer.concat(chunks), {
             status: res.statusCode ?? 0,
@@ -84,11 +95,15 @@ async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: st
         );
       });
     });
+    timeout = setTimeout(() => {
+      if (!settled) req.destroy(new Error("代理请求超时"));
+    }, init.timeoutMs ?? 20000);
 
     req.on("timeout", () => {
       req.destroy(new Error("代理请求超时"));
     });
     req.on("error", (error: NodeJS.ErrnoException) => {
+      finish();
       reject(new Error(proxyErrorMessage(error)));
     });
 
@@ -110,7 +125,7 @@ async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: st
 
 export async function fetchViaProxy(
   input: string,
-  init: RequestInit = {},
+  init: ProxyRequestInit = {},
   proxy?: ProxyRecord | null,
 ) {
   const selectedProxy = proxy === undefined ? getNextEnabledProxy() : proxy;

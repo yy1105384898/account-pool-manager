@@ -71,7 +71,8 @@ async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>
         {
           cache: "no-store",
           headers: { "User-Agent": "account-pool-manager/1.0" },
-          signal: AbortSignal.timeout(15000),
+          timeoutMs: 3000,
+          signal: AbortSignal.timeout(3000),
         },
         proxy,
       );
