@@ -23,6 +23,22 @@ type ProxyGeoPayload = {
 
 const PROXY_HEALTH_CHECK_URL = "http://www.google.com/generate_204";
 
+function withinTimeout<T>(request: Promise<T>, timeoutMs: number, message: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    request.then(
+      (result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 function readGeoLocation(payload: ProxyGeoPayload | null) {
   if (!payload) return { ip: null, location: null };
   if (payload.success === false || payload.status === "fail") {
@@ -40,17 +56,21 @@ function readGeoLocation(payload: ProxyGeoPayload | null) {
 
 async function checkProxyHealth(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
   const started = Date.now();
-  const response = await fetchViaProxy(
-    PROXY_HEALTH_CHECK_URL,
-    {
-      method: "HEAD",
-      cache: "no-store",
-      headers: { "User-Agent": "account-pool-manager/1.0" },
-      redirect: "manual",
-      timeoutMs: 10000,
-      signal: AbortSignal.timeout(10000),
-    },
-    proxy,
+  const response = await withinTimeout(
+    fetchViaProxy(
+      PROXY_HEALTH_CHECK_URL,
+      {
+        method: "HEAD",
+        cache: "no-store",
+        headers: { "User-Agent": "account-pool-manager/1.0" },
+        redirect: "manual",
+        timeoutMs: 10000,
+        signal: AbortSignal.timeout(10000),
+      },
+      proxy,
+    ),
+    10000,
+    "代理健康检测超时",
   );
   if (response.status < 200 || response.status >= 400) {
     throw new Error(`健康检测返回 ${response.status}`);
@@ -60,15 +80,19 @@ async function checkProxyHealth(proxy: NonNullable<ReturnType<typeof getProxyByI
 
 async function detectProxyGeo(proxy: NonNullable<ReturnType<typeof getProxyById>>) {
   try {
-    const response = await fetchViaProxy(
-      "http://ip-api.com/json/?lang=zh-CN",
-      {
-        cache: "no-store",
-        headers: { "User-Agent": "account-pool-manager/1.0" },
-        timeoutMs: 2500,
-        signal: AbortSignal.timeout(2500),
-      },
-      proxy,
+    const response = await withinTimeout(
+      fetchViaProxy(
+        "http://ip-api.com/json/?lang=zh-CN",
+        {
+          cache: "no-store",
+          headers: { "User-Agent": "account-pool-manager/1.0" },
+          timeoutMs: 2500,
+          signal: AbortSignal.timeout(2500),
+        },
+        proxy,
+      ),
+      2500,
+      "代理出口检测超时",
     );
     if (!response.ok) return { ip: null, location: null };
     const payload = (await response.json().catch(() => null)) as ProxyGeoPayload | null;
