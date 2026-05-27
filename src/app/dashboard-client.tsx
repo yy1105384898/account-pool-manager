@@ -2321,7 +2321,7 @@ export default function DashboardClient({ data }: Props) {
                         {data.proxyPoolEnabled ? "停用轮询" : "启用轮询"}
                       </button>
                       <button type="button" disabled={isPending || data.proxies.length === 0} onClick={testAllProxies} className={secondaryButton}>
-                        获取地区
+                        代理测试
                       </button>
                       <button type="button" disabled={isPending || data.proxies.every((item) => item.lastTestStatus !== "error")} onClick={disableFailedProxies} className={secondaryButton}>
                         停用未识别
