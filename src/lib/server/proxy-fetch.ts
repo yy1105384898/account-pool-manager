@@ -93,8 +93,12 @@ async function fetchWithNodeProxy(input: string, init: RequestInit, proxyUrl: st
     });
 
     if (init.signal) {
-      if (init.signal.aborted) req.destroy(new Error("请求已取消"));
-      init.signal.addEventListener("abort", () => req.destroy(new Error("请求已取消")), {
+      const abortMessage =
+        init.signal.reason instanceof DOMException && init.signal.reason.name === "TimeoutError"
+          ? "代理请求超时"
+          : "请求已取消";
+      if (init.signal.aborted) req.destroy(new Error(abortMessage));
+      init.signal.addEventListener("abort", () => req.destroy(new Error(abortMessage)), {
         once: true,
       });
     }

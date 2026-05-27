@@ -2369,7 +2369,7 @@ export default function DashboardClient({ data }: Props) {
                           <th className="px-4 py-3">状态</th>
                           <th className="px-4 py-3">地区</th>
                           <th className="px-4 py-3">出口 IP</th>
-                          <th className="px-4 py-3">Codex 延迟</th>
+                          <th className="px-4 py-3">延迟</th>
                           <th className="px-4 py-3">测试结果</th>
                           <th className="px-4 py-3">最后检测</th>
                           <th className="px-4 py-3">操作</th>
