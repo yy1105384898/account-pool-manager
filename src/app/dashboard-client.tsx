@@ -939,7 +939,6 @@ export default function DashboardClient({ data }: Props) {
     if (typeof remaining !== "number" || Number.isNaN(remaining)) return minimum;
     return minimum === null ? remaining : Math.min(minimum, remaining);
   }, null);
-  const recentErrorLogs = data.logs.filter((item) => item.status === "error").slice(0, 4);
   const visibleLogs = data.logs.slice(0, activityLimit);
   const activePoolAccounts = data.accounts.filter((item) => item.status === "active");
   const refreshTokenAccounts = activePoolAccounts.filter((item) => item.hasRefreshToken);
@@ -1019,6 +1018,38 @@ export default function DashboardClient({ data }: Props) {
     data.summary.warningAccounts +
     remoteWarningAccounts +
     relayAlertPlans.length;
+  const currentAlertItems = [
+    ...(data.summary.warningAccounts > 0
+      ? [{
+          id: "local-warning",
+          title: "本地号池异常",
+          detail: `库存中有 ${data.summary.warningAccounts} 个异常账号，请到库存管理查看状态。`,
+        }]
+      : []),
+    ...relayReplenishPlans.flatMap((plan) => {
+      const items: Array<{ id: string; title: string; detail: string }> = [];
+      if (plan.warningAccounts > 0) {
+        items.push({
+          id: `remote-warning-${plan.integration.id}`,
+          title: `${plan.integration.name} 远端异常`,
+          detail: `中转站有 ${plan.warningAccounts} 个异常账号，正常 ${plan.remoteStatus?.normalAccounts ?? 0}/${plan.remoteStatus?.totalAccounts ?? 0}。`,
+        });
+      }
+      if (relayAlertPlans.includes(plan)) {
+        const reasons = [
+          !plan.remoteStatus ? "尚未检测状态" : "",
+          plan.normalLow ? `正常账号不足 ${plan.remoteStatus?.normalAccounts ?? 0}/${plan.autoRule?.minUsableAccounts ?? 0}` : "",
+          plan.quotaCritical ? "5h 额度接近耗尽" : plan.quotaLow ? "5h 额度低于阈值" : "",
+        ].filter(Boolean).join("，");
+        items.push({
+          id: `replenish-warning-${plan.integration.id}`,
+          title: `${plan.integration.name} 补号告警`,
+          detail: `${reasons}；建议补号 ${plan.recommendedPushCount} 个。`,
+        });
+      }
+      return items;
+    }),
+  ];
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const activeViewRef = useRef<WorkspaceView>(activeView);
   const activeViewMeta = workspaceViewMeta[activeView];
@@ -1987,37 +2018,23 @@ export default function DashboardClient({ data }: Props) {
                     <section className={panelClass}>
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className={sectionTitleClass}>最近告警</p>
-                          <h2 className="mt-2 text-xl font-semibold text-white">最近异常</h2>
+                          <p className={sectionTitleClass}>当前告警</p>
+                          <h2 className="mt-2 text-xl font-semibold text-white">当前异常</h2>
                         </div>
-                        {recentErrorLogs.length > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => clearLogs()}
-                            className="rounded-full border border-rose-300/25 bg-rose-400/12 px-3 py-1.5 text-xs text-rose-100 transition hover:bg-rose-400/18"
-                          >
-                            清理
-                          </button>
-                        ) : null}
                       </div>
                       <div className="mt-4 grid gap-3">
-                        {recentErrorLogs.length === 0 ? (
+                        {currentAlertItems.length === 0 ? (
                           <div className="rounded-2xl border border-emerald-300/18 bg-emerald-400/10 px-4 py-4 text-sm text-emerald-100">
-                            当前没有错误日志。
+                            当前没有异常告警。
                           </div>
                         ) : null}
-                        {recentErrorLogs.map((log) => (
+                        {currentAlertItems.slice(0, 4).map((item) => (
                           <div
-                            key={log.id}
+                            key={item.id}
                             className="rounded-2xl border border-rose-300/20 bg-rose-400/10 px-4 py-3"
                           >
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-medium text-rose-50">{maskSensitiveText(log.title)}</p>
-                              <span className="font-mono text-xs text-rose-100/70">
-                                {formatTime(log.createdAt)}
-                              </span>
-                            </div>
-                            <p className="mt-2 text-xs leading-5 text-rose-100/75">{maskSensitiveText(log.detail)}</p>
+                            <p className="text-sm font-medium text-rose-50">{item.title}</p>
+                            <p className="mt-2 text-xs leading-5 text-rose-100/75">{item.detail}</p>
                           </div>
                         ))}
                       </div>
